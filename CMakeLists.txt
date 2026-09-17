@@ -41,6 +41,7 @@ qt_add_executable(MusicApp
     src/platform/CredentialCookieJar.cpp src/platform/CredentialCookieJar.h
     src/storage/LocalStore.cpp src/storage/LocalStore.h
 )
+set_target_properties(MusicApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 if(WIN32)
     target_sources(MusicApp PRIVATE
