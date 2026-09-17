@@ -99,10 +99,11 @@ jobs:
           version: ${{ env.QT_VERSION }}
           target: ${{ matrix.target }}
           arch: ${{ matrix.qt-arch }}
-          modules: qtmultimedia qtshadertools qtimageformats qtsvg
+          modules: qtmultimedia qtshadertools qtimageformats
           tools: ${{ matrix.tools }}
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
           cache: true
-          cache-key-prefix: qt-${{ matrix.runner }}-${{ matrix.name }}
+          cache-key-prefix: qt-${{ matrix.runner }}-${{ matrix.name }}-aqt-8c3695d
 
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
