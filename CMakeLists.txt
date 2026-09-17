@@ -130,6 +130,7 @@ elseif(UNIX AND NOT APPLE)
 endif()
 
 if(IOS)
+    qt6_add_ios_ffmpeg_libraries(MusicApp)
     install(TARGETS MusicApp BUNDLE DESTINATION Payload)
 else()
     install(TARGETS MusicApp BUNDLE DESTINATION . RUNTIME DESTINATION bin)
