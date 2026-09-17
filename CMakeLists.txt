@@ -149,21 +149,38 @@ endif()
 if(NOT ANDROID)
     set(MUSIC_BUILD_NAME "${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}"
         CACHE STRING "Release artifact platform name")
-    set(CPACK_PACKAGE_NAME "Music")
-    set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-    set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/artifacts")
-    set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
-    if(WIN32 OR APPLE)
-        set(CPACK_GENERATOR ZIP)
+    if(IOS)
+        set(music_ios_stage "${CMAKE_BINARY_DIR}/ios-package")
+        set(music_ios_artifact
+            "${CMAKE_BINARY_DIR}/artifacts/Music-${MUSIC_BUILD_NAME}-unsigned.ipa")
+        add_custom_target(package
+            COMMAND "${CMAKE_COMMAND}" -E rm -rf "${music_ios_stage}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                    "${music_ios_stage}/Payload" "${CMAKE_BINARY_DIR}/artifacts"
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory "$<TARGET_BUNDLE_DIR:MusicApp>"
+                    "${music_ios_stage}/Payload/MusicApp.app"
+            COMMAND "${CMAKE_COMMAND}" -E chdir "${music_ios_stage}"
+                    "${CMAKE_COMMAND}" -E tar cf "${music_ios_artifact}" --format=zip -- Payload
+            DEPENDS MusicApp
+            BYPRODUCTS "${music_ios_artifact}"
+            VERBATIM)
     else()
-        set(CPACK_GENERATOR TGZ)
+        set(CPACK_PACKAGE_NAME "Music")
+        set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+        set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/artifacts")
+        set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
+        if(WIN32 OR APPLE)
+            set(CPACK_GENERATOR ZIP)
+        else()
+            set(CPACK_GENERATOR TGZ)
+        endif()
+        if(APPLE)
+            set(CPACK_PACKAGE_FILE_NAME "Music-${MUSIC_BUILD_NAME}-unsigned")
+        else()
+            set(CPACK_PACKAGE_FILE_NAME "Music-${MUSIC_BUILD_NAME}")
+        endif()
+        include(CPack)
     endif()
-    if(APPLE)
-        set(CPACK_PACKAGE_FILE_NAME "Music-${MUSIC_BUILD_NAME}-unsigned")
-    else()
-        set(CPACK_PACKAGE_FILE_NAME "Music-${MUSIC_BUILD_NAME}")
-    endif()
-    include(CPack)
 endif()
 if(WIN32)
     target_link_libraries(MusicApp PRIVATE Crypt32)
