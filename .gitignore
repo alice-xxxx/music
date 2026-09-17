@@ -1,0 +1,12 @@
+/build/
+/.signing/
+/.ci-deps/
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+*.user
+/tests/
+/docs/
+*.md
+/.vscode/
