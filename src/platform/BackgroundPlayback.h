@@ -1,9 +1,15 @@
 #pragma once
-#include <QAbstractNativeEventFilter>
 #include <QObject>
 #include <QString>
 
-class BackgroundPlayback final : public QObject, public QAbstractNativeEventFilter
+#ifdef Q_OS_WIN
+#include <QAbstractNativeEventFilter>
+#endif
+
+class BackgroundPlayback final : public QObject
+#ifdef Q_OS_WIN
+                               , public QAbstractNativeEventFilter
+#endif
 {
     Q_OBJECT
   public:
