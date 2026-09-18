@@ -1,10 +1,15 @@
 #pragma once
+#include <QByteArray>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 
 #ifdef Q_OS_WIN
 #include <QAbstractNativeEventFilter>
 #endif
+
+class QNetworkAccessManager;
+class QNetworkReply;
 
 class BackgroundPlayback final : public QObject
 #ifdef Q_OS_WIN
@@ -16,7 +21,8 @@ class BackgroundPlayback final : public QObject
     explicit BackgroundPlayback(QObject *parent = nullptr);
     ~BackgroundPlayback();
     void update(bool hasTrack, bool desiredPlaying, bool playing, qint64 position,
-                qint64 duration, const QString &title, const QString &artist);
+                qint64 duration, const QString &title, const QString &artist,
+                const QString &artworkUrl);
 
     void dispatchPlay();
     void dispatchPause();
@@ -43,6 +49,13 @@ class BackgroundPlayback final : public QObject
     void outputDisconnected();
 
   private:
+    void updateArtwork(const QString &artworkUrl);
+    void publishArtwork();
+
     bool m_active = false;
     void *m_platformState = nullptr;
+    QNetworkAccessManager *m_artworkNetwork = nullptr;
+    QPointer<QNetworkReply> m_artworkReply;
+    QString m_artworkUrl;
+    QByteArray m_artworkData;
 };

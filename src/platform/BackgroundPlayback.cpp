@@ -1,7 +1,27 @@
 #include "BackgroundPlayback.h"
 #include <QCoreApplication>
 #include <QMetaObject>
+#include <QNetworkAccessManager>
+#include <QNetworkDiskCache>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QStandardPaths>
+#include <QUrl>
 #include <QtGlobal>
+
+namespace
+{
+constexpr qsizetype maximumArtworkBytes = 8 * 1024 * 1024;
+
+QString normalizedArtworkUrl(QString url)
+{
+    url = url.trimmed();
+    url.replace(QStringLiteral("{size}"), QStringLiteral("400"));
+    if (url.startsWith(QStringLiteral("//")))
+        url.prepend(QStringLiteral("https:"));
+    return url;
+}
+} // namespace
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -16,8 +36,10 @@ void updateWindowsMediaIntegration(void *state, bool hasTrack, bool playing, qin
 void *createAppleMediaIntegration(BackgroundPlayback *owner);
 void destroyAppleMediaIntegration(void *state);
 bool setApplePlaybackActive(void *state, bool active);
-void updateAppleNowPlaying(void *state, bool hasTrack, bool playing, qint64 position,
-                           qint64 duration, const QString &title, const QString &artist);
+void updateAppleNowPlaying(void *state, bool hasTrack, bool desiredPlaying, bool playing,
+                           qint64 position, qint64 duration, const QString &title,
+                           const QString &artist);
+void updateAppleNowPlayingArtwork(void *state, const QByteArray &data);
 #endif
 
 #ifdef MUSIC_APP_HAS_DBUS
@@ -28,6 +50,7 @@ void updateLinuxMediaIntegration(void *state, bool hasTrack, bool playing, qint6
 #endif
 
 #ifdef Q_OS_ANDROID
+#include <QJniEnvironment>
 #include <QJniObject>
 #include <QMutex>
 #include <QMutexLocker>
@@ -121,6 +144,14 @@ Java_io_github_musicclient_app_PlaybackService_nativeOutputDisconnected(JNIEnv *
 
 BackgroundPlayback::BackgroundPlayback(QObject *parent) : QObject(parent)
 {
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+    m_artworkNetwork = new QNetworkAccessManager(this);
+    auto *cache = new QNetworkDiskCache(m_artworkNetwork);
+    cache->setCacheDirectory(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
+                             QStringLiteral("/media-session-artwork"));
+    cache->setMaximumCacheSize(64 * 1024 * 1024);
+    m_artworkNetwork->setCache(cache);
+#endif
 #ifdef Q_OS_WIN
     m_platformState = createWindowsMediaIntegration(this);
     QCoreApplication::instance()->installNativeEventFilter(this);
@@ -195,28 +226,30 @@ bool BackgroundPlayback::nativeEventFilter(const QByteArray &eventType, void *me
 #endif
 
 void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing, qint64 position,
-                                qint64 duration, const QString &title, const QString &artist)
+                                qint64 duration, const QString &title, const QString &artist,
+                                const QString &artworkUrl)
 {
-    if (m_active != desiredPlaying)
+    updateArtwork(hasTrack ? artworkUrl : QString{});
+    if (m_active != hasTrack)
     {
-#ifdef Q_OS_WIN
-    updateWindowsMediaIntegration(m_platformState, hasTrack, playing, position, duration, title,
-                                  artist);
-#elif defined(Q_OS_ANDROID)
+#ifdef Q_OS_ANDROID
         const QJniObject context = QNativeInterface::QAndroidApplication::context();
         if (context.isValid())
             QJniObject::callStaticMethod<void>(
                 "io/github/musicclient/app/PlaybackService", "setPlaybackActive",
                 "(Landroid/content/Context;Z)V", context.object<jobject>(),
-                static_cast<jboolean>(desiredPlaying));
+                static_cast<jboolean>(hasTrack));
 #elif defined(Q_OS_IOS) || defined(Q_OS_MACOS)
-        if (!setApplePlaybackActive(m_platformState, desiredPlaying))
+        if (!setApplePlaybackActive(m_platformState, hasTrack) && hasTrack)
             return;
 #endif
-        m_active = desiredPlaying;
+        m_active = hasTrack;
     }
 
-#ifdef Q_OS_ANDROID
+#ifdef Q_OS_WIN
+    updateWindowsMediaIntegration(m_platformState, hasTrack, playing, position, duration, title,
+                                  artist);
+#elif defined(Q_OS_ANDROID)
     const QJniObject context = QNativeInterface::QAndroidApplication::context();
     if (context.isValid())
     {
@@ -231,17 +264,89 @@ void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing
             javaTitle.object<jstring>(), javaArtist.object<jstring>());
     }
 #elif defined(Q_OS_IOS) || defined(Q_OS_MACOS)
-    updateAppleNowPlaying(m_platformState, hasTrack, playing, position, duration, title, artist);
+    updateAppleNowPlaying(m_platformState, hasTrack, desiredPlaying, playing, position, duration,
+                          title, artist);
 #elif defined(MUSIC_APP_HAS_DBUS)
     updateLinuxMediaIntegration(m_platformState, hasTrack, playing, position, duration, title,
                                 artist);
 #else
     Q_UNUSED(hasTrack);
+    Q_UNUSED(desiredPlaying);
     Q_UNUSED(playing);
     Q_UNUSED(position);
     Q_UNUSED(duration);
     Q_UNUSED(title);
     Q_UNUSED(artist);
+#endif
+}
+
+void BackgroundPlayback::updateArtwork(const QString &artworkUrl)
+{
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+    const QString normalizedUrl = normalizedArtworkUrl(artworkUrl);
+    if (normalizedUrl == m_artworkUrl)
+        return;
+    m_artworkUrl = normalizedUrl;
+    if (m_artworkReply)
+    {
+        m_artworkReply->abort();
+        m_artworkReply->deleteLater();
+        m_artworkReply.clear();
+    }
+    m_artworkData.clear();
+    publishArtwork();
+
+    const QUrl url(normalizedUrl);
+    if (!m_artworkNetwork || !url.isValid() ||
+        (url.scheme() != QStringLiteral("https") && url.scheme() != QStringLiteral("http")))
+        return;
+
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
+                         QNetworkRequest::PreferCache);
+    auto *reply = m_artworkNetwork->get(request);
+    m_artworkReply = reply;
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, normalizedUrl]
+            {
+                if (reply != m_artworkReply || normalizedUrl != m_artworkUrl)
+                {
+                    reply->deleteLater();
+                    return;
+                }
+                m_artworkReply.clear();
+                const QByteArray data = reply->error() == QNetworkReply::NoError
+                                                ? reply->readAll()
+                                                : QByteArray{};
+                reply->deleteLater();
+                if (data.isEmpty() || data.size() > maximumArtworkBytes)
+                    return;
+                m_artworkData = data;
+                publishArtwork();
+            });
+#else
+    Q_UNUSED(artworkUrl);
+#endif
+}
+
+void BackgroundPlayback::publishArtwork()
+{
+#ifdef Q_OS_ANDROID
+    QJniEnvironment environment;
+    jbyteArray data = environment->NewByteArray(static_cast<jsize>(m_artworkData.size()));
+    if (!data)
+        return;
+    if (!m_artworkData.isEmpty())
+        environment->SetByteArrayRegion(
+            data, 0, static_cast<jsize>(m_artworkData.size()),
+            reinterpret_cast<const jbyte *>(m_artworkData.constData()));
+    QJniObject::callStaticMethod<void>("io/github/musicclient/app/PlaybackService",
+                                       "updateArtwork", "([B)V", data);
+    environment->DeleteLocalRef(data);
+#elif defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+    updateAppleNowPlayingArtwork(m_platformState, m_artworkData);
 #endif
 }
 

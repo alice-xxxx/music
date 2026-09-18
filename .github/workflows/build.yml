@@ -174,7 +174,9 @@ jobs:
         with:
           name: Music-${{ matrix.name }}-${{ github.run_number }}
           path: |
-            build/artifacts/*
+            build/artifacts/*.zip
+            build/artifacts/*.tar.gz
+            build/artifacts/*.ipa
             build/**/outputs/apk/release/*-signed.apk
           if-no-files-found: error
           compression-level: 0
@@ -200,4 +202,8 @@ jobs:
           name: Music ${{ inputs.release_tag }}
           prerelease: ${{ inputs.prerelease }}
           fail_on_unmatched_files: true
-          files: build/release/**/*
+          files: |
+            build/release/**/*.zip
+            build/release/**/*.tar.gz
+            build/release/**/*.ipa
+            build/release/**/*-signed.apk

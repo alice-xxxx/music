@@ -10,6 +10,7 @@
 #include "platform/BackgroundPlayback.h"
 
 #include <QGuiApplication>
+#include <QIcon>
 #include <QQuickStyle>
 #include <QStandardPaths>
 #include "storage/LocalStore.h"
@@ -45,6 +46,7 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationName(QStringLiteral("Music"));
     QCoreApplication::setOrganizationName(QStringLiteral("MusicClient"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+    QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/app-icon.png")));
 
     // App-scoped state is created here so navigation never recreates playback.
     AppSettings appSettings;
@@ -63,7 +65,8 @@ int main(int argc, char *argv[])
         backgroundPlayback.update(
             playbackController.hasCurrentTrack(), playbackController.desiredPlaying(),
             playbackController.playing(), playbackController.position(),
-            playbackController.duration(), playbackController.title(), playbackController.artist());
+            playbackController.duration(), playbackController.title(), playbackController.artist(),
+            playbackController.coverUrl());
     };
     QObject::connect(&playbackController, &PlaybackController::snapshotChanged,
                      &backgroundPlayback, synchronizeMediaSession);

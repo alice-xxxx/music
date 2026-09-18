@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Music
+Comment=Music player
+Exec=MusicApp
+Icon=io.github.musicclient.app
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+StartupNotify=true

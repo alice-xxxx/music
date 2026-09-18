@@ -5,6 +5,11 @@
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#import <UIKit/UIKit.h>
+#else
+#import <AppKit/AppKit.h>
+#endif
 
 namespace
 {
@@ -78,7 +83,49 @@ struct AppleMediaState
     MusicRemoteCommandHandler *handler = nil;
     id interruptionObserver = nil;
     id routeObserver = nil;
+    MPMediaItemArtwork *artwork = nil;
+    bool hasTrack = false;
+    bool desiredPlaying = false;
+    bool playing = false;
+    qint64 position = 0;
+    qint64 duration = 0;
+    QString title;
+    QString artist;
 };
+
+void publishAppleNowPlaying(AppleMediaState *state)
+{
+    MPRemoteCommandCenter *commands = [MPRemoteCommandCenter sharedCommandCenter];
+    commands.playCommand.enabled = state->hasTrack && !state->desiredPlaying;
+    commands.pauseCommand.enabled = state->hasTrack && state->desiredPlaying;
+    commands.togglePlayPauseCommand.enabled = state->hasTrack;
+    commands.nextTrackCommand.enabled = state->hasTrack;
+    commands.previousTrackCommand.enabled = state->hasTrack;
+    commands.changePlaybackPositionCommand.enabled = state->hasTrack && state->duration > 0;
+
+    MPNowPlayingInfoCenter *center = [MPNowPlayingInfoCenter defaultCenter];
+    if (!state->hasTrack)
+    {
+        center.nowPlayingInfo = nil;
+        return;
+    }
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+    info[MPMediaItemPropertyTitle] = state->title.toNSString();
+    info[MPMediaItemPropertyArtist] = state->artist.toNSString();
+    if (state->duration > 0)
+        info[MPMediaItemPropertyPlaybackDuration] = @(state->duration / 1000.0);
+    if (state->artwork)
+        info[MPMediaItemPropertyArtwork] = state->artwork;
+    info[MPNowPlayingInfoPropertyElapsedPlaybackTime] =
+        @(qMax<qint64>(0, state->position) / 1000.0);
+    info[MPNowPlayingInfoPropertyPlaybackRate] = @(state->playing ? 1.0 : 0.0);
+    center.nowPlayingInfo = info;
+#if !TARGET_OS_IPHONE
+    if (@available(macOS 10.12.2, *))
+        center.playbackState = state->desiredPlaying ? MPNowPlayingPlaybackStatePlaying
+                                                     : MPNowPlayingPlaybackStatePaused;
+#endif
+}
 
 void *createAppleMediaIntegration(BackgroundPlayback *owner)
 {
@@ -159,6 +206,7 @@ void destroyAppleMediaIntegration(void *opaque)
     [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = nil;
     state->handler.owner = nullptr;
 #if !__has_feature(objc_arc)
+    [state->artwork release];
     [state->handler release];
 #endif
     delete state;
@@ -194,35 +242,55 @@ bool setApplePlaybackActive(void *opaque, bool active)
     return true;
 }
 
-void updateAppleNowPlaying(void *opaque, bool hasTrack, bool playing, qint64 position,
-                           qint64 duration, const QString &title, const QString &artist)
+void updateAppleNowPlaying(void *opaque, bool hasTrack, bool desiredPlaying, bool playing,
+                           qint64 position, qint64 duration, const QString &title,
+                           const QString &artist)
 {
     auto *state = static_cast<AppleMediaState *>(opaque);
     if (!state)
         return;
-    MPRemoteCommandCenter *commands = [MPRemoteCommandCenter sharedCommandCenter];
-    commands.playCommand.enabled = hasTrack && !playing;
-    commands.pauseCommand.enabled = hasTrack && playing;
-    commands.togglePlayPauseCommand.enabled = hasTrack;
-    commands.nextTrackCommand.enabled = hasTrack;
-    commands.previousTrackCommand.enabled = hasTrack;
-    commands.changePlaybackPositionCommand.enabled = hasTrack && duration > 0;
+    state->hasTrack = hasTrack;
+    state->desiredPlaying = desiredPlaying;
+    state->playing = playing;
+    state->position = position;
+    state->duration = duration;
+    state->title = title;
+    state->artist = artist;
+    publishAppleNowPlaying(state);
+}
 
-    MPNowPlayingInfoCenter *center = [MPNowPlayingInfoCenter defaultCenter];
-    if (!hasTrack)
+void updateAppleNowPlayingArtwork(void *opaque, const QByteArray &data)
+{
+    auto *state = static_cast<AppleMediaState *>(opaque);
+    if (!state)
+        return;
+#if !__has_feature(objc_arc)
+    [state->artwork release];
+#endif
+    state->artwork = nil;
+    if (data.isEmpty())
     {
-        center.nowPlayingInfo = nil;
+        publishAppleNowPlaying(state);
         return;
     }
-    NSMutableDictionary *info = [NSMutableDictionary dictionary];
-    info[MPMediaItemPropertyTitle] = title.toNSString();
-    info[MPMediaItemPropertyArtist] = artist.toNSString();
-    if (duration > 0)
-        info[MPMediaItemPropertyPlaybackDuration] = @(duration / 1000.0);
-    info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = @(qMax<qint64>(0, position) / 1000.0);
-    info[MPNowPlayingInfoPropertyPlaybackRate] = @(playing ? 1.0 : 0.0);
-    center.nowPlayingInfo = info;
-    if (@available(iOS 13.0, macOS 10.12.2, *))
-        center.playbackState = playing ? MPNowPlayingPlaybackStatePlaying
-                                       : MPNowPlayingPlaybackStatePaused;
+
+    NSData *encoded = [NSData dataWithBytes:data.constData()
+                                     length:static_cast<NSUInteger>(data.size())];
+#if TARGET_OS_IPHONE
+    UIImage *image = [UIImage imageWithData:encoded];
+    if (image)
+        state->artwork = [[MPMediaItemArtwork alloc]
+            initWithBoundsSize:image.size
+                requestHandler:^UIImage *(CGSize) { return image; }];
+#else
+    NSImage *image = [[NSImage alloc] initWithData:encoded];
+    if (image)
+        state->artwork = [[MPMediaItemArtwork alloc]
+            initWithBoundsSize:image.size
+                requestHandler:^NSImage *(CGSize) { return image; }];
+#if !__has_feature(objc_arc)
+    [image release];
+#endif
+#endif
+    publishAppleNowPlaying(state);
 }

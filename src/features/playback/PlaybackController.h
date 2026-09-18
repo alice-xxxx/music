@@ -91,6 +91,10 @@ class PlaybackController final : public QObject
     }
     QString title() const;
     QString artist() const;
+    QString coverUrl() const
+    {
+        return m_track.coverUrl;
+    }
     bool hasCurrentTrack() const;
     bool playing() const;
     bool desiredPlaying() const

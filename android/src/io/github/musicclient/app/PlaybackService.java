@@ -10,6 +10,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -40,6 +42,7 @@ public final class PlaybackService extends Service {
     private static final String EXTRA_ARTIST = "artist";
 
     private static volatile PlaybackService instance;
+    private static volatile byte[] pendingArtwork;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private MediaSession mediaSession;
@@ -56,6 +59,7 @@ public final class PlaybackService extends Service {
     private long duration;
     private String title = "";
     private String artist = "";
+    private Bitmap artwork;
 
     private static native void nativePlay();
     private static native void nativePause();
@@ -71,7 +75,10 @@ public final class PlaybackService extends Service {
         Context application = context.getApplicationContext();
         PlaybackService service = instance;
         if (!active && service != null) {
-            service.handler.post(() -> service.leaveForeground(!service.resumeOnFocusGain));
+            service.handler.post(() -> {
+                service.leaveForeground(true, true);
+                service.stopSelf();
+            });
             return;
         }
         if (!active)
@@ -103,13 +110,21 @@ public final class PlaybackService extends Service {
         Intent intent = stateIntent(application, hasTrack, desired, playing, position, duration,
                 title, artist);
         try {
-            if (desired && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 application.startForegroundService(intent);
             else
                 application.startService(intent);
         } catch (RuntimeException error) {
             Log.e(TAG, "Unable to prepare the playback media session", error);
         }
+    }
+
+    public static void updateArtwork(byte[] encoded) {
+        pendingArtwork = encoded;
+        PlaybackService service = instance;
+        if (service == null)
+            return;
+        service.handler.post(() -> service.applyArtwork(encoded));
     }
 
     public static void shutdown(Context context) {
@@ -136,6 +151,7 @@ public final class PlaybackService extends Service {
         audioManager = (AudioManager)getSystemService(AUDIO_SERVICE);
         createNotificationChannel();
         createMediaSession();
+        applyArtwork(pendingArtwork);
         IntentFilter filter = new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             registerReceiver(noisyReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
@@ -165,9 +181,7 @@ public final class PlaybackService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? null : intent.getAction();
-        if (ACTION_START.equals(action))
-            desiredPlaying = true;
-        else if (ACTION_TOGGLE.equals(action))
+        if (ACTION_TOGGLE.equals(action))
             nativeToggle();
         else if (ACTION_NEXT.equals(action))
             nativeNext();
@@ -181,7 +195,7 @@ public final class PlaybackService extends Service {
                     intent.getLongExtra(EXTRA_POSITION, 0),
                     intent.getLongExtra(EXTRA_DURATION, 0),
                     intent.getStringExtra(EXTRA_TITLE), intent.getStringExtra(EXTRA_ARTIST));
-        if (ACTION_START.equals(action) || desiredPlaying)
+        if (ACTION_START.equals(action) || hasTrack)
             enterForeground();
         return START_NOT_STICKY;
     }
@@ -196,12 +210,18 @@ public final class PlaybackService extends Service {
         this.title = title == null ? "" : title;
         this.artist = artist == null ? "" : artist;
         updateMediaSession();
-        if (desired)
+        if (hasTrack)
             enterForeground();
         else
-            leaveForeground(!resumeOnFocusGain);
+            leaveForeground(true, true);
         if (!hasTrack)
             stopSelf();
+    }
+
+    private void applyArtwork(byte[] encoded) {
+        artwork = encoded == null || encoded.length == 0 ? null
+                : BitmapFactory.decodeByteArray(encoded, 0, encoded.length);
+        updateMediaSession();
     }
 
     private void updateMediaSession() {
@@ -221,8 +241,13 @@ public final class PlaybackService extends Service {
                 .putString(MediaMetadata.METADATA_KEY_ARTIST, artist);
         if (duration > 0)
             metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, duration);
+        if (artwork != null) {
+            metadata.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork);
+            metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork);
+            metadata.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artwork);
+        }
         mediaSession.setMetadata(metadata.build());
-        if (desiredPlaying)
+        if (hasTrack && foreground)
             getSystemService(NotificationManager.class).notify(NOTIFICATION_ID,
                     createNotification());
     }
@@ -237,22 +262,31 @@ public final class PlaybackService extends Service {
                 startForeground(NOTIFICATION_ID, notification);
             foreground = true;
         }
+        if (!desiredPlaying) {
+            pausePlaybackResources(!resumeOnFocusGain);
+            return;
+        }
         acquireWakeLock();
         if (!requestAudioFocus()) {
             nativeInterruptionBegan(false);
-            leaveForeground(true);
+            pausePlaybackResources(true);
         }
     }
 
-    private void leaveForeground(boolean abandonFocus) {
+    private void pausePlaybackResources(boolean abandonFocus) {
         releaseWakeLock();
         if (abandonFocus)
             abandonAudioFocus();
+    }
+
+    private void leaveForeground(boolean abandonFocus, boolean removeNotification) {
+        pausePlaybackResources(abandonFocus);
         if (foreground) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
-                stopForeground(STOP_FOREGROUND_REMOVE);
+                stopForeground(removeNotification ? STOP_FOREGROUND_REMOVE
+                                                  : STOP_FOREGROUND_DETACH);
             else
-                stopForeground(true);
+                stopForeground(removeNotification);
             foreground = false;
         }
     }
@@ -301,11 +335,11 @@ public final class PlaybackService extends Service {
                 focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
             resumeOnFocusGain = desiredPlaying;
             hasAudioFocus = false;
-            leaveForeground(false);
+            pausePlaybackResources(false);
             nativeInterruptionBegan(true);
         } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
             resumeOnFocusGain = false;
-            leaveForeground(true);
+            pausePlaybackResources(true);
             nativeInterruptionBegan(false);
         }
     };
@@ -313,7 +347,7 @@ public final class PlaybackService extends Service {
     private final BroadcastReceiver noisyReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) {
-                leaveForeground(true);
+                pausePlaybackResources(true);
                 nativeOutputDisconnected();
             }
         }
@@ -347,6 +381,8 @@ public final class PlaybackService extends Service {
                         playing ? "Pause" : "Play", serviceAction(ACTION_TOGGLE, 2))
                 .addAction(android.R.drawable.ic_media_next, "Next",
                         serviceAction(ACTION_NEXT, 3));
+        if (artwork != null)
+            builder.setLargeIcon(artwork);
         if (contentIntent != null)
             builder.setContentIntent(contentIntent);
         return builder.build();
@@ -394,7 +430,7 @@ public final class PlaybackService extends Service {
             mediaSession.release();
             mediaSession = null;
         }
-        leaveForeground(false);
+        leaveForeground(false, true);
         super.onDestroy();
     }
 

@@ -41,6 +41,9 @@ qt_add_executable(MusicApp
     src/platform/BackgroundPlayback.cpp src/platform/BackgroundPlayback.h
     src/platform/CredentialCookieJar.cpp src/platform/CredentialCookieJar.h
     src/storage/LocalStore.cpp src/storage/LocalStore.h)
+qt_add_resources(MusicApp "MusicApp_app_icon"
+    PREFIX "/"
+    FILES app-icon.png)
 set_target_properties(MusicApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 target_include_directories(MusicApp PRIVATE src)
@@ -49,6 +52,12 @@ target_link_libraries(MusicApp PRIVATE
     Qt6::Quick Qt6::QuickControls2)
 
 if(WIN32)
+    enable_language(RC)
+    set(MUSIC_APP_ICON_ICO "${CMAKE_CURRENT_SOURCE_DIR}/app-icon.ico")
+    configure_file(cmake/windows-app-icon.rc.in
+                   "${CMAKE_CURRENT_BINARY_DIR}/windows-app-icon.rc" @ONLY)
+    target_sources(MusicApp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/windows-app-icon.rc")
+    set_target_properties(MusicApp PROPERTIES WIN32_EXECUTABLE TRUE)
     file(GLOB music_app_cppwinrt_paths
         "$ENV{ProgramFiles\(x86\)}/Windows Kits/10/Include/*/cppwinrt"
         "$ENV{ProgramFiles}/Windows Kits/10/Include/*/cppwinrt")
@@ -122,6 +131,13 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "Music"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+    if(NOT IOS)
+        set(music_app_macos_icon "${CMAKE_CURRENT_SOURCE_DIR}/app-icon.icns")
+        target_sources(MusicApp PRIVATE "${music_app_macos_icon}")
+        set_source_files_properties("${music_app_macos_icon}" PROPERTIES
+            MACOSX_PACKAGE_LOCATION Resources)
+        set_target_properties(MusicApp PROPERTIES MACOSX_BUNDLE_ICON_FILE "app-icon.icns")
+    endif()
 endif()
 
 if(UNIX AND NOT APPLE AND NOT ANDROID)
@@ -133,6 +149,12 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
     else()
         message(WARNING "Qt DBus was not found; Linux MPRIS media controls are disabled")
     endif()
+    configure_file(packaging/linux/io.github.musicclient.app.desktop.in
+                   "${CMAKE_CURRENT_BINARY_DIR}/io.github.musicclient.app.desktop" @ONLY)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/io.github.musicclient.app.desktop"
+            DESTINATION share/applications)
+    install(FILES packaging/linux/io.github.musicclient.app.png
+            DESTINATION share/icons/hicolor/512x512/apps)
 endif()
 
 if(ANDROID)
@@ -146,6 +168,7 @@ if(ANDROID)
     set_target_properties(MusicApp PROPERTIES
         QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
         QT_ANDROID_PACKAGE_NAME "io.github.musicclient.app"
+        QT_ANDROID_APP_ICON "@mipmap/ic_launcher"
         QT_ANDROID_APP_NAME "音乐"
         QT_ANDROID_MIN_SDK_VERSION 28
         QT_ANDROID_COMPILE_SDK_VERSION 36
@@ -158,8 +181,13 @@ elseif(UNIX AND NOT APPLE)
 endif()
 
 if(IOS)
+    set(music_app_ios_asset_catalog "${CMAKE_CURRENT_SOURCE_DIR}/ios/Assets.xcassets")
+    target_sources(MusicApp PRIVATE "${music_app_ios_asset_catalog}")
+    set_source_files_properties("${music_app_ios_asset_catalog}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
     set_target_properties(MusicApp PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist.in"
+        XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME AppIcon
         QT_IOS_LAUNCH_SCREEN "${CMAKE_CURRENT_SOURCE_DIR}/ios/LaunchScreen.storyboard")
     qt6_add_ios_ffmpeg_libraries(MusicApp)
     install(TARGETS MusicApp BUNDLE DESTINATION Payload)

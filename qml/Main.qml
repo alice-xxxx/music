@@ -23,7 +23,8 @@ ApplicationWindow {
     readonly property int nowPlayingOverlay: 0
     readonly property int settingsOverlay: 1
     readonly property int collectionOverlay: 2
-    readonly property bool mobilePlatform: Qt.platform.os === "android" || Qt.platform.os === "ios"
+    readonly property bool iosPlatform: Qt.platform.os === "ios"
+    readonly property bool mobilePlatform: Qt.platform.os === "android" || iosPlatform
     property var pendingAddTrack: ({})
     property var navigationHistory: []
     property int currentPage: Math.max(searchPage, Math.min(libraryPage, appSettings.lastPage))
@@ -119,6 +120,7 @@ ApplicationWindow {
     height: mobilePlatform ? Screen.height : 720
     minimumWidth: mobilePlatform ? 0 : 390
     minimumHeight: mobilePlatform ? 0 : 600
+    flags: Qt.Window | (iosPlatform ? Qt.ExpandedClientAreaHint : 0)
     visible: true
     color: Theme.background
     title: "音乐"

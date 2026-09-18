@@ -44,11 +44,22 @@ Page {
             }
         }
     }
-    ScrollView {
+    Flickable {
+        id: settingsScroll
         anchors.fill: parent
+        clip: true
+        contentWidth: width
+        contentHeight: settingsContent.implicitHeight
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar {
+            policy: settingsScroll.contentHeight > settingsScroll.height ? ScrollBar.AsNeeded
+                                                                         : ScrollBar.AlwaysOff
+        }
         ColumnLayout {
-            width: Math.min(720, root.width - 32)
-            x: Math.max(16, (root.width - width) / 2)
+            id: settingsContent
+            width: Math.min(720, settingsScroll.width - 32)
+            x: Math.max(16, (settingsScroll.width - width) / 2)
             spacing: 20
             Label {
                 text: "账号与服务"
