@@ -225,14 +225,39 @@ jobs:
         with:
           path: build/release
 
-      - uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836 # v2
+      - name: Collect release files
+        id: release-files
+        env:
+          MINIMAL_BUILD: ${{ inputs.minimal_build }}
+        shell: bash
+        run: |
+          patterns=('*.zip' '*.ipa' '*-signed.apk')
+          if [[ "$MINIMAL_BUILD" != 'true' ]]; then
+            patterns+=('*.tar.gz')
+          fi
+
+          release_files=()
+          for pattern in "${patterns[@]}"; do
+            mapfile -d '' -t matches < <(
+              find build/release -type f -name "$pattern" -print0 | sort -z
+            )
+            if (( ${#matches[@]} == 0 )); then
+              echo "::error::No release artifact matches $pattern"
+              exit 1
+            fi
+            release_files+=("${matches[@]}")
+          done
+
+          {
+            echo 'files<<EOF'
+            printf '%s\n' "${release_files[@]}"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ inputs.release_tag }}
           name: Music ${{ inputs.release_tag }}
           prerelease: ${{ inputs.prerelease }}
           fail_on_unmatched_files: true
-          files: |
-            build/release/**/*.zip
-            build/release/**/*.tar.gz
-            build/release/**/*.ipa
-            build/release/**/*-signed.apk
+          files: ${{ steps.release-files.outputs.files }}
