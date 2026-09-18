@@ -27,7 +27,7 @@ class AudioEngine final : public QObject
     void durationChanged(qint64 duration);
     void seekableChanged(bool seekable);
     void audioMetadataChanged();
-    void outputDeviceChanged();
+    void outputDeviceChanged(bool disconnected);
     void playbackStateChanged(QMediaPlayer::PlaybackState state);
     void mediaStatusChanged(QMediaPlayer::MediaStatus status);
     void errorOccurred(QMediaPlayer::Error error, const QString &message);

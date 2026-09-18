@@ -382,6 +382,7 @@ void PlaybackController::playSong(const QVariantMap &data)
 }
 void PlaybackController::togglePlayback()
 {
+    m_resumeAfterInterruption = false;
     if (!hasCurrentTrack())
         return;
     if (!m_errorMessage.isEmpty() && !m_resolving && m_currentIndex >= 0)
@@ -403,10 +404,16 @@ void PlaybackController::togglePlayback()
         m_resolving = false;
     }
     if (!m_desiredPlaying)
+    {
         m_player.pause();
-    else if (!m_player.source().isEmpty() && !m_waitingForSeek)
-        m_player.play();
+        emit snapshotChanged();
+        return;
+    }
+
+    // Activate the native background-audio session/service before playback starts.
     emit snapshotChanged();
+    if (!m_player.source().isEmpty() && !m_waitingForSeek)
+        m_player.play();
 }
 void PlaybackController::next()
 {
@@ -1162,14 +1169,46 @@ void PlaybackController::handlePlaybackError(QMediaPlayer::Error error, const QS
     emit snapshotChanged();
 }
 
-void PlaybackController::handleOutputDeviceChange()
+void PlaybackController::pauseForInterruption(bool resumable)
 {
-    if (!hasCurrentTrack() || (m_player.source().isEmpty() && !m_resolving))
+    if (!m_desiredPlaying)
+    {
+        if (!resumable)
+            m_resumeAfterInterruption = false;
         return;
-    m_pendingSeek = qMax(position(), m_lastGoodPosition);
-    ++m_generation;
-    clearCurrentSource();
-    setError(QStringLiteral("音频设备已变化，点击播放继续"));
-    emit positionChanged();
+    }
+    m_resumeAfterInterruption = resumable;
+    m_desiredPlaying = false;
+    m_player.pause();
     emit snapshotChanged();
+}
+
+void PlaybackController::resumeAfterInterruption(bool shouldResume)
+{
+    const bool resume = m_resumeAfterInterruption && shouldResume;
+    m_resumeAfterInterruption = false;
+    if (!resume || m_desiredPlaying || !hasCurrentTrack())
+        return;
+    m_desiredPlaying = true;
+    emit snapshotChanged();
+    if (!m_player.source().isEmpty() && !m_waitingForSeek)
+        m_player.play();
+}
+
+void PlaybackController::pauseForOutputLoss()
+{
+    m_resumeAfterInterruption = false;
+    if (!m_desiredPlaying)
+        return;
+    m_desiredPlaying = false;
+    m_player.pause();
+    m_notice = QStringLiteral("音频输出已断开，播放已暂停");
+    emit noticeChanged();
+    emit snapshotChanged();
+}
+
+void PlaybackController::handleOutputDeviceChange(bool disconnected)
+{
+    if (disconnected)
+        pauseForOutputLoss();
 }

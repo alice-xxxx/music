@@ -121,6 +121,9 @@ class PlaybackController final : public QObject
     Q_INVOKABLE void removeQueueIndex(int index);
     Q_INVOKABLE void clearHistory();
     Q_INVOKABLE void seek(qint64 positionMs);
+    void pauseForInterruption(bool resumable);
+    void resumeAfterInterruption(bool shouldResume);
+    void pauseForOutputLoss();
   signals:
     void audioMetadataChanged();
     void storageErrorChanged();
@@ -148,7 +151,7 @@ class PlaybackController final : public QObject
     void prepareSourcePlayback();
     void applyResumePosition();
     void handlePlaybackError(QMediaPlayer::Error error, const QString &message);
-    void handleOutputDeviceChange();
+    void handleOutputDeviceChange(bool disconnected);
     QTimer m_recoveryTimer;
     QTimer m_resumeDeadline;
     int m_recoveryAttempts = 0;
@@ -218,6 +221,7 @@ class PlaybackController final : public QObject
     int m_repeatMode = 0;
     bool m_shuffle = false;
     bool m_desiredPlaying = false;
+    bool m_resumeAfterInterruption = false;
     QList<quint64> m_playedItemIds;
     QList<quint64> m_shuffleRound;
     QueueModel m_queueModel;

@@ -1,47 +1,100 @@
 #include "CredentialCookieJar.h"
 #include <QCryptographicHash>
-#include <QNetworkCookie>
-#include <QSettings>
 #include <QDateTime>
+#include <QMessageAuthenticationCode>
+#include <QNetworkCookie>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSet>
-
-#ifdef Q_OS_WIN
-#include <windows.h>
-#include <wincrypt.h>
+#include <QSettings>
 
 namespace
 {
-QByteArray protect(const QByteArray &plain)
+constexpr auto storageMagic = "MUSIC_COOKIE_V1";
+constexpr qsizetype nonceSize = 16;
+constexpr qsizetype tagSize = 16;
+
+QByteArray deriveKey(const QByteArray &context)
 {
-    DATA_BLOB input{static_cast<DWORD>(plain.size()),
-                    reinterpret_cast<BYTE *>(const_cast<char *>(plain.data()))};
-    DATA_BLOB output{};
-    if (!CryptProtectData(&input, L"Music session", nullptr, nullptr, nullptr,
-                          CRYPTPROTECT_UI_FORBIDDEN, &output))
-        return {};
-    const QByteArray encrypted(reinterpret_cast<const char *>(output.pbData),
-                               static_cast<qsizetype>(output.cbData));
-    LocalFree(output.pbData);
-    return encrypted;
+    return QCryptographicHash::hash(
+        QByteArrayLiteral("MusicClient credential storage v1|") + context,
+        QCryptographicHash::Sha256);
 }
-QByteArray unprotect(const QByteArray &encrypted, bool *success)
+
+QByteArray randomBytes(qsizetype size)
+{
+    QByteArray bytes(size, Qt::Uninitialized);
+    for (qsizetype offset = 0; offset < size; offset += 4)
+    {
+        const quint32 value = QRandomGenerator::system()->generate();
+        const qsizetype count = qMin<qsizetype>(4, size - offset);
+        for (qsizetype index = 0; index < count; ++index)
+            bytes[offset + index] = static_cast<char>(value >> (index * 8));
+    }
+    return bytes;
+}
+
+QByteArray applyKeyStream(const QByteArray &input, const QByteArray &key, const QByteArray &nonce)
+{
+    QByteArray output(input.size(), Qt::Uninitialized);
+    for (qsizetype offset = 0, block = 0; offset < input.size(); offset += 32, ++block)
+    {
+        QByteArray seed = key + nonce;
+        for (int shift = 56; shift >= 0; shift -= 8)
+            seed.append(static_cast<char>(static_cast<quint64>(block) >> shift));
+        const QByteArray stream = QCryptographicHash::hash(seed, QCryptographicHash::Sha256);
+        const qsizetype count = qMin<qsizetype>(stream.size(), input.size() - offset);
+        for (qsizetype index = 0; index < count; ++index)
+            output[offset + index] = input[offset + index] ^ stream[index];
+    }
+    return output;
+}
+
+bool equalTags(const QByteArray &left, const QByteArray &right)
+{
+    if (left.size() != right.size())
+        return false;
+    unsigned char difference = 0;
+    for (qsizetype index = 0; index < left.size(); ++index)
+        difference |= static_cast<unsigned char>(left[index] ^ right[index]);
+    return difference == 0;
+}
+
+QByteArray encrypt(const QByteArray &plain, const QByteArray &context)
+{
+    const QByteArray magic(storageMagic);
+    const QByteArray nonce = randomBytes(nonceSize);
+    const QByteArray key = deriveKey(context);
+    const QByteArray encrypted = applyKeyStream(plain, key, nonce);
+    const QByteArray tag = QMessageAuthenticationCode::hash(magic + nonce + encrypted, key,
+                                                             QCryptographicHash::Sha256)
+                               .left(tagSize);
+    return magic + nonce + encrypted + tag;
+}
+
+QByteArray decrypt(const QByteArray &stored, const QByteArray &context, bool *success)
 {
     *success = false;
-    DATA_BLOB input{static_cast<DWORD>(encrypted.size()),
-                    reinterpret_cast<BYTE *>(const_cast<char *>(encrypted.data()))};
-    DATA_BLOB output{};
-    if (!CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN,
-                            &output))
+    const QByteArray magic(storageMagic);
+    if (stored.size() < magic.size() + nonceSize + tagSize || !stored.startsWith(magic))
         return {};
-    const QByteArray plain(reinterpret_cast<const char *>(output.pbData),
-                           static_cast<qsizetype>(output.cbData));
+
+    const QByteArray nonce = stored.mid(magic.size(), nonceSize);
+    const QByteArray encrypted = stored.mid(magic.size() + nonceSize,
+                                            stored.size() - magic.size() - nonceSize - tagSize);
+    const QByteArray actualTag = stored.right(tagSize);
+    const QByteArray key = deriveKey(context);
+    const QByteArray expectedTag =
+        QMessageAuthenticationCode::hash(magic + nonce + encrypted, key,
+                                         QCryptographicHash::Sha256)
+            .left(tagSize);
+    if (!equalTags(actualTag, expectedTag))
+        return {};
+
     *success = true;
-    LocalFree(output.pbData);
-    return plain;
+    return applyKeyStream(encrypted, key, nonce);
 }
 } // namespace
-#endif
 
 CredentialCookieJar::CredentialCookieJar(const QUrl &serviceBase, QObject *parent, bool persistent)
     : QNetworkCookieJar(parent), m_serviceBase(serviceBase), m_persistent(persistent)
@@ -49,18 +102,9 @@ CredentialCookieJar::CredentialCookieJar(const QUrl &serviceBase, QObject *paren
     const QUrl serviceIdentity = serviceBase.adjusted(QUrl::RemoveQuery | QUrl::RemoveFragment);
     const QByteArray identity = serviceIdentity.toString(QUrl::FullyEncoded).toUtf8();
     m_storageKey =
-        QStringLiteral("auth/cookies.%1.dpapi")
+        QStringLiteral("auth/cookies.%1.encrypted")
             .arg(QString::fromLatin1(
                 QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex().left(16)));
-    // Releases before service-scoped credential storage used one global key.
-    // Only the original built-in service may import it; custom services must
-    // never receive credentials that were issued for another origin.
-    m_canImportLegacyStorage =
-        serviceIdentity.scheme() == QStringLiteral("https") && serviceIdentity.port(443) == 443 &&
-        serviceIdentity.userInfo().isEmpty() &&
-        (serviceIdentity.path().isEmpty() || serviceIdentity.path() == QStringLiteral("/")) &&
-        serviceIdentity.host().compare(QStringLiteral("ku-gou-music-api-gold-beta.vercel.app"),
-                                       Qt::CaseInsensitive) == 0;
     if (m_persistent)
         load();
 }
@@ -109,11 +153,6 @@ void CredentialCookieJar::clearStoredCookies()
         return;
     QSettings settings;
     settings.remove(m_storageKey);
-    if (m_canImportLegacyStorage)
-    {
-        settings.remove(QStringLiteral("auth/cookies.dpapi"));
-        settings.setValue(QStringLiteral("auth/legacyImportDisabled"), true);
-    }
 }
 
 bool CredentialCookieJar::hasLoginSession() const
@@ -243,17 +282,11 @@ QByteArray CredentialCookieJar::authorizationHeader(const QUrl &url) const
 
 void CredentialCookieJar::load()
 {
-#ifdef Q_OS_WIN
     QSettings settings;
-    QByteArray encoded = settings.value(m_storageKey).toByteArray();
-    const bool importingLegacy =
-        encoded.isEmpty() && m_canImportLegacyStorage &&
-        !settings.value(QStringLiteral("auth/legacyImportDisabled"), false).toBool();
-    if (importingLegacy)
-        encoded = settings.value(QStringLiteral("auth/cookies.dpapi")).toByteArray();
+    const QByteArray encoded = settings.value(m_storageKey).toByteArray();
     const QByteArray encrypted = QByteArray::fromBase64(encoded);
     bool decrypted = false;
-    const QByteArray payload = unprotect(encrypted, &decrypted);
+    const QByteArray payload = decrypt(encrypted, m_storageKey.toUtf8(), &decrypted);
     if (!encoded.isEmpty() && !decrypted)
     {
         m_unreadableStorage = true;
@@ -273,18 +306,12 @@ void CredentialCookieJar::load()
         }
     }
     setAllCookies(cookies);
-    // Copy, rather than move, so an interrupted upgrade cannot destroy the
-    // only recoverable login. The legacy key is never consulted by custom services.
-    if (importingLegacy && !cookies.isEmpty())
-        save();
-#endif
 }
 
 void CredentialCookieJar::save()
 {
     if (m_unreadableStorage)
         return;
-#ifdef Q_OS_WIN
     QByteArray payload;
     for (const QNetworkCookie &cookie : allCookies())
     {
@@ -292,7 +319,7 @@ void CredentialCookieJar::save()
         payload += cookie.toRawForm(QNetworkCookie::Full);
         payload += '\n';
     }
-    const auto encrypted = protect(payload);
+    const auto encrypted = encrypt(payload, m_storageKey.toUtf8());
     if (encrypted.isEmpty())
     {
         m_storageError = QStringLiteral("无法加密保存登录状态，本次会话仍可使用");
@@ -304,7 +331,4 @@ void CredentialCookieJar::save()
     m_storageError = settings.status() == QSettings::NoError
                          ? QString{}
                          : QStringLiteral("无法保存登录状态，本次会话仍可使用");
-#else
-    m_storageError = QStringLiteral("此平台尚未接入安全存储，仅保留本次登录");
-#endif
 }

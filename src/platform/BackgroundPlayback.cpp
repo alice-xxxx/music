@@ -1,0 +1,283 @@
+#include "BackgroundPlayback.h"
+#include <QCoreApplication>
+#include <QMetaObject>
+#include <QtGlobal>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+void *createWindowsMediaIntegration(BackgroundPlayback *owner);
+void destroyWindowsMediaIntegration(void *state);
+bool windowsMediaIntegrationHandlesCommands(void *state);
+void updateWindowsMediaIntegration(void *state, bool hasTrack, bool playing, qint64 position,
+                                   qint64 duration, const QString &title, const QString &artist);
+#endif
+
+#if defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+void *createAppleMediaIntegration(BackgroundPlayback *owner);
+void destroyAppleMediaIntegration(void *state);
+bool setApplePlaybackActive(void *state, bool active);
+void updateAppleNowPlaying(void *state, bool hasTrack, bool playing, qint64 position,
+                           qint64 duration, const QString &title, const QString &artist);
+#endif
+
+#ifdef MUSIC_APP_HAS_DBUS
+void *createLinuxMediaIntegration(BackgroundPlayback *owner);
+void destroyLinuxMediaIntegration(void *state);
+void updateLinuxMediaIntegration(void *state, bool hasTrack, bool playing, qint64 position,
+                                 qint64 duration, const QString &title, const QString &artist);
+#endif
+
+#ifdef Q_OS_ANDROID
+#include <QJniObject>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QPointer>
+
+namespace
+{
+QMutex androidOwnerMutex;
+QPointer<BackgroundPlayback> androidOwner;
+
+template <typename Callback> void dispatchAndroid(Callback callback)
+{
+    QPointer<BackgroundPlayback> owner;
+    {
+        QMutexLocker locker(&androidOwnerMutex);
+        owner = androidOwner;
+    }
+    if (!owner)
+        return;
+    QMetaObject::invokeMethod(
+        owner,
+        [owner, callback]
+        {
+            if (owner)
+                callback(owner.data());
+        },
+        Qt::QueuedConnection);
+}
+} // namespace
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_musicclient_app_PlaybackService_nativePlay(JNIEnv *, jclass)
+{
+    dispatchAndroid([](BackgroundPlayback *owner) { owner->dispatchPlay(); });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_musicclient_app_PlaybackService_nativePause(JNIEnv *, jclass)
+{
+    dispatchAndroid([](BackgroundPlayback *owner) { owner->dispatchPause(); });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_musicclient_app_PlaybackService_nativeToggle(JNIEnv *, jclass)
+{
+    dispatchAndroid([](BackgroundPlayback *owner) { owner->dispatchToggle(); });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_musicclient_app_PlaybackService_nativeNext(JNIEnv *, jclass)
+{
+    dispatchAndroid([](BackgroundPlayback *owner) { owner->dispatchNext(); });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_musicclient_app_PlaybackService_nativePrevious(JNIEnv *, jclass)
+{
+    dispatchAndroid([](BackgroundPlayback *owner) { owner->dispatchPrevious(); });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_musicclient_app_PlaybackService_nativeSeek(JNIEnv *, jclass, jlong position)
+{
+    dispatchAndroid(
+        [position](BackgroundPlayback *owner) { owner->dispatchSeek(position); });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_musicclient_app_PlaybackService_nativeInterruptionBegan(JNIEnv *, jclass,
+                                                                       jboolean resumable)
+{
+    dispatchAndroid([resumable](BackgroundPlayback *owner)
+                    { owner->dispatchInterruptionBegan(resumable); });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_musicclient_app_PlaybackService_nativeInterruptionEnded(JNIEnv *, jclass,
+                                                                       jboolean shouldResume)
+{
+    dispatchAndroid([shouldResume](BackgroundPlayback *owner)
+                    { owner->dispatchInterruptionEnded(shouldResume); });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_musicclient_app_PlaybackService_nativeOutputDisconnected(JNIEnv *, jclass)
+{
+    dispatchAndroid(
+        [](BackgroundPlayback *owner) { owner->dispatchOutputDisconnected(); });
+}
+#endif
+
+BackgroundPlayback::BackgroundPlayback(QObject *parent) : QObject(parent)
+{
+#ifdef Q_OS_WIN
+    m_platformState = createWindowsMediaIntegration(this);
+    QCoreApplication::instance()->installNativeEventFilter(this);
+#elif defined(Q_OS_ANDROID)
+    QMutexLocker locker(&androidOwnerMutex);
+    androidOwner = this;
+#elif defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+    m_platformState = createAppleMediaIntegration(this);
+#elif defined(MUSIC_APP_HAS_DBUS)
+    m_platformState = createLinuxMediaIntegration(this);
+#endif
+}
+
+BackgroundPlayback::~BackgroundPlayback()
+{
+#ifdef Q_OS_WIN
+    QCoreApplication::instance()->removeNativeEventFilter(this);
+    destroyWindowsMediaIntegration(m_platformState);
+#elif defined(Q_OS_ANDROID)
+    {
+        QMutexLocker locker(&androidOwnerMutex);
+        if (androidOwner == this)
+            androidOwner.clear();
+    }
+    const QJniObject context = QNativeInterface::QAndroidApplication::context();
+    if (context.isValid())
+        QJniObject::callStaticMethod<void>("io/github/musicclient/app/PlaybackService", "shutdown",
+                                           "(Landroid/content/Context;)V",
+                                           context.object<jobject>());
+#elif defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+    destroyAppleMediaIntegration(m_platformState);
+#elif defined(MUSIC_APP_HAS_DBUS)
+    destroyLinuxMediaIntegration(m_platformState);
+#endif
+}
+
+#ifdef Q_OS_WIN
+bool BackgroundPlayback::nativeEventFilter(const QByteArray &eventType, void *message,
+                                           qintptr *result)
+{
+    if (eventType != "windows_generic_MSG" && eventType != "windows_dispatcher_MSG")
+        return false;
+    const auto *native = static_cast<MSG *>(message);
+    if (native->message != WM_APPCOMMAND)
+        return false;
+    if (windowsMediaIntegrationHandlesCommands(m_platformState))
+        return false;
+    switch (GET_APPCOMMAND_LPARAM(native->lParam))
+    {
+    case APPCOMMAND_MEDIA_PLAY_PAUSE:
+        dispatchToggle();
+        break;
+    case APPCOMMAND_MEDIA_NEXTTRACK:
+        dispatchNext();
+        break;
+    case APPCOMMAND_MEDIA_PREVIOUSTRACK:
+        dispatchPrevious();
+        break;
+    case APPCOMMAND_MEDIA_PLAY:
+        dispatchPlay();
+        break;
+    case APPCOMMAND_MEDIA_PAUSE:
+    case APPCOMMAND_MEDIA_STOP:
+        dispatchPause();
+        break;
+    default:
+        return false;
+    }
+    *result = 1;
+    return true;
+}
+#endif
+
+void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing, qint64 position,
+                                qint64 duration, const QString &title, const QString &artist)
+{
+    if (m_active != desiredPlaying)
+    {
+#ifdef Q_OS_WIN
+    updateWindowsMediaIntegration(m_platformState, hasTrack, playing, position, duration, title,
+                                  artist);
+#elif defined(Q_OS_ANDROID)
+        const QJniObject context = QNativeInterface::QAndroidApplication::context();
+        if (context.isValid())
+            QJniObject::callStaticMethod<void>(
+                "io/github/musicclient/app/PlaybackService", "setPlaybackActive",
+                "(Landroid/content/Context;Z)V", context.object<jobject>(),
+                static_cast<jboolean>(desiredPlaying));
+#elif defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+        if (!setApplePlaybackActive(m_platformState, desiredPlaying))
+            return;
+#endif
+        m_active = desiredPlaying;
+    }
+
+#ifdef Q_OS_ANDROID
+    const QJniObject context = QNativeInterface::QAndroidApplication::context();
+    if (context.isValid())
+    {
+        const QJniObject javaTitle = QJniObject::fromString(title);
+        const QJniObject javaArtist = QJniObject::fromString(artist);
+        QJniObject::callStaticMethod<void>(
+            "io/github/musicclient/app/PlaybackService", "updateSession",
+            "(Landroid/content/Context;ZZZJJLjava/lang/String;Ljava/lang/String;)V",
+            context.object<jobject>(), static_cast<jboolean>(hasTrack),
+            static_cast<jboolean>(desiredPlaying), static_cast<jboolean>(playing),
+            static_cast<jlong>(position), static_cast<jlong>(duration),
+            javaTitle.object<jstring>(), javaArtist.object<jstring>());
+    }
+#elif defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+    updateAppleNowPlaying(m_platformState, hasTrack, playing, position, duration, title, artist);
+#elif defined(MUSIC_APP_HAS_DBUS)
+    updateLinuxMediaIntegration(m_platformState, hasTrack, playing, position, duration, title,
+                                artist);
+#else
+    Q_UNUSED(hasTrack);
+    Q_UNUSED(playing);
+    Q_UNUSED(position);
+    Q_UNUSED(duration);
+    Q_UNUSED(title);
+    Q_UNUSED(artist);
+#endif
+}
+
+void BackgroundPlayback::dispatchPlay()
+{
+    emit playRequested();
+}
+void BackgroundPlayback::dispatchPause()
+{
+    emit pauseRequested();
+}
+void BackgroundPlayback::dispatchToggle()
+{
+    emit toggleRequested();
+}
+void BackgroundPlayback::dispatchNext()
+{
+    emit nextRequested();
+}
+void BackgroundPlayback::dispatchPrevious()
+{
+    emit previousRequested();
+}
+void BackgroundPlayback::dispatchSeek(qint64 position)
+{
+    emit seekRequested(position);
+}
+void BackgroundPlayback::dispatchInterruptionBegan(bool resumable)
+{
+    emit interruptionBegan(resumable);
+}
+void BackgroundPlayback::dispatchInterruptionEnded(bool shouldResume)
+{
+    emit interruptionEnded(shouldResume);
+}
+void BackgroundPlayback::dispatchOutputDisconnected()
+{
+    emit outputDisconnected();
+}

@@ -32,7 +32,6 @@ class CredentialCookieJar final : public QNetworkCookieJar
     QUrl m_serviceBase;
     QString m_storageError;
     QString m_storageKey;
-    bool m_canImportLegacyStorage = false;
     bool m_persistent = true;
     bool m_unreadableStorage = false;
 };

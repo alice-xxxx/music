@@ -3,6 +3,7 @@
 #include <QAudioOutput>
 #include <QAudioDevice>
 #include <QMediaMetaData>
+#include <algorithm>
 
 AudioEngine::AudioEngine(QObject *parent) : QObject(parent)
 {
@@ -12,11 +13,18 @@ AudioEngine::AudioEngine(QObject *parent) : QObject(parent)
             {
                 if (!m_output)
                     return;
+                const QByteArray previousId = m_output->device().id();
                 const auto nextDevice = QMediaDevices::defaultAudioOutput();
-                if (m_output->device().id() == nextDevice.id())
+                if (previousId == nextDevice.id())
                     return;
-                emit outputDeviceChanged();
+                const auto outputs = QMediaDevices::audioOutputs();
+                const bool disconnected =
+                    !previousId.isEmpty() &&
+                    std::none_of(outputs.cbegin(), outputs.cend(),
+                                 [&previousId](const QAudioDevice &device)
+                                 { return device.id() == previousId; });
                 m_output->setDevice(nextDevice);
+                emit outputDeviceChanged(disconnected);
             });
 }
 void AudioEngine::setAudioOutput(QAudioOutput *output)

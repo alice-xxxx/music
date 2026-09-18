@@ -18,15 +18,11 @@ AppSettings::AppSettings(QObject *parent) : QObject(parent)
     m_dataSaver = settings.value(QStringLiteral("playback/dataSaver"), false).toBool();
     m_themeMode =
         settings.value(QStringLiteral("appearance/theme"), QStringLiteral("system")).toString();
-    m_serviceUrl = settings.value(QStringLiteral("service/url")).toString().trimmed();
-    const auto environment = qgetenv("KUGOU_API_URL");
-    m_environmentOverride = !environment.isEmpty();
-    m_activeService = QUrl(m_environmentOverride ? QString::fromUtf8(environment) : m_serviceUrl);
+    m_activeService = m_serviceUrl = settings.value(QStringLiteral("service/url")).toString().trimmed();
     if (!validateServiceUrl(m_activeService.toString()).isEmpty())
     {
         m_activeService = QUrl();
-        m_storageMessage = QStringLiteral(
-            "服务配置无效，请在设置中填写 HTTPS 地址；环境变量覆盖需要在外部修正后重启");
+        m_storageMessage = QStringLiteral("服务配置无效，请在设置中填写 HTTPS 地址");
     }
     if (!m_activeService.isEmpty() && !m_activeService.path().endsWith(QLatin1Char('/')))
         m_activeService.setPath(m_activeService.path() + QLatin1Char('/'));

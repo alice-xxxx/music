@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import "theme"
 import "pages"
 import "components"
@@ -22,6 +23,7 @@ ApplicationWindow {
     readonly property int nowPlayingOverlay: 0
     readonly property int settingsOverlay: 1
     readonly property int collectionOverlay: 2
+    readonly property bool mobilePlatform: Qt.platform.os === "android" || Qt.platform.os === "ios"
     property var pendingAddTrack: ({})
     property var navigationHistory: []
     property int currentPage: Math.max(searchPage, Math.min(libraryPage, appSettings.lastPage))
@@ -31,6 +33,8 @@ ApplicationWindow {
                                    || activeFocusItem instanceof TextEdit
     onCurrentPageChanged: appSettings.lastPage = currentPage
     Component.onCompleted: {
+        if (mobilePlatform)
+            showMaximized();
         if (appSettings.activeServiceUrl.length === 0)
             overlayPage = settingsOverlay;
     }
@@ -111,10 +115,10 @@ ApplicationWindow {
         overlayPage = previous.page;
     }
 
-    width: 1100
-    height: 720
-    minimumWidth: 390
-    minimumHeight: 600
+    width: mobilePlatform ? Screen.width : 1100
+    height: mobilePlatform ? Screen.height : 720
+    minimumWidth: mobilePlatform ? 0 : 390
+    minimumHeight: mobilePlatform ? 0 : 600
     visible: true
     color: Theme.background
     title: "音乐"

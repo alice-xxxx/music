@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(MusicApp VERSION 0.1 LANGUAGES CXX)
+project(MusicApp VERSION 0.1 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,20 +38,31 @@ qt_add_executable(MusicApp
     src/features/playback/QueueModel.cpp src/features/playback/QueueModel.h
     src/features/search/SearchViewModel.cpp src/features/search/SearchViewModel.h
     src/features/settings/AppSettings.cpp src/features/settings/AppSettings.h
+    src/platform/BackgroundPlayback.cpp src/platform/BackgroundPlayback.h
     src/platform/CredentialCookieJar.cpp src/platform/CredentialCookieJar.h
-    src/storage/LocalStore.cpp src/storage/LocalStore.h
-)
+    src/storage/LocalStore.cpp src/storage/LocalStore.h)
 set_target_properties(MusicApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-
-if(WIN32)
-    target_sources(MusicApp PRIVATE
-        src/platform/WindowsMediaCommands.cpp src/platform/WindowsMediaCommands.h)
-endif()
 
 target_include_directories(MusicApp PRIVATE src)
 target_link_libraries(MusicApp PRIVATE
     Qt6::Core Qt6::Gui Qt6::Multimedia Qt6::Network Qt6::Sql
     Qt6::Quick Qt6::QuickControls2)
+
+if(WIN32)
+    file(GLOB music_app_cppwinrt_paths
+        "$ENV{ProgramFiles\(x86\)}/Windows Kits/10/Include/*/cppwinrt"
+        "$ENV{ProgramFiles}/Windows Kits/10/Include/*/cppwinrt")
+    list(SORT music_app_cppwinrt_paths COMPARE NATURAL ORDER DESCENDING)
+    if(music_app_cppwinrt_paths)
+        list(GET music_app_cppwinrt_paths 0 music_app_cppwinrt_path)
+        target_sources(MusicApp PRIVATE src/platform/BackgroundPlayback_windows.cpp)
+        target_include_directories(MusicApp PRIVATE "${music_app_cppwinrt_path}")
+        target_link_libraries(MusicApp PRIVATE runtimeobject ole32)
+        target_compile_definitions(MusicApp PRIVATE WINRT_LEAN_AND_MEAN NOMINMAX)
+    else()
+        message(WARNING "Windows SDK C++/WinRT headers were not found; Windows SMTC is disabled")
+    endif()
+endif()
 
 set_source_files_properties(qml/theme/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(MusicApp
@@ -87,8 +98,7 @@ qt_add_qml_module(MusicApp
         qml/icons/repeat-one.svg
         qml/icons/repeat.svg
         qml/icons/retry.svg
-        qml/icons/shuffle.svg
-)
+        qml/icons/shuffle.svg)
 
 # Keep the build and packaging contract in this single project entrypoint.
 option(MUSIC_APP_OPTIMIZE_RELEASE "Use balanced O2 release optimization" ON)
@@ -100,12 +110,29 @@ if(MUSIC_APP_OPTIMIZE_RELEASE)
 endif()
 
 if(APPLE)
+    enable_language(OBJCXX)
+    find_library(MUSIC_APP_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
+    find_library(MUSIC_APP_MEDIAPLAYER_FRAMEWORK MediaPlayer REQUIRED)
+    target_sources(MusicApp PRIVATE src/platform/BackgroundPlayback_ios.mm)
+    target_link_libraries(MusicApp PRIVATE
+        "${MUSIC_APP_AVFOUNDATION_FRAMEWORK}" "${MUSIC_APP_MEDIAPLAYER_FRAMEWORK}")
     set_target_properties(MusicApp PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.musicclient.app"
         MACOSX_BUNDLE_BUNDLE_NAME "Music"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+endif()
+
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+    find_package(Qt6 QUIET COMPONENTS DBus)
+    if(TARGET Qt6::DBus)
+        target_sources(MusicApp PRIVATE src/platform/BackgroundPlayback_linux.cpp)
+        target_link_libraries(MusicApp PRIVATE Qt6::DBus)
+        target_compile_definitions(MusicApp PRIVATE MUSIC_APP_HAS_DBUS)
+    else()
+        message(WARNING "Qt DBus was not found; Linux MPRIS media controls are disabled")
+    endif()
 endif()
 
 if(ANDROID)
@@ -117,6 +144,7 @@ if(ANDROID)
     add_android_openssl_libraries(MusicApp)
     set(MUSIC_APP_BUILD_NUMBER 1 CACHE STRING "Monotonic Android version code")
     set_target_properties(MusicApp PROPERTIES
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android"
         QT_ANDROID_PACKAGE_NAME "io.github.musicclient.app"
         QT_ANDROID_APP_NAME "音乐"
         QT_ANDROID_MIN_SDK_VERSION 28
@@ -130,10 +158,13 @@ elseif(UNIX AND NOT APPLE)
 endif()
 
 if(IOS)
+    set_target_properties(MusicApp PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist.in"
+        QT_IOS_LAUNCH_SCREEN "${CMAKE_CURRENT_SOURCE_DIR}/ios/LaunchScreen.storyboard")
     qt6_add_ios_ffmpeg_libraries(MusicApp)
     install(TARGETS MusicApp BUNDLE DESTINATION Payload)
 else()
-    install(TARGETS MusicApp BUNDLE DESTINATION . RUNTIME DESTINATION bin)
+    install(TARGETS MusicApp BUNDLE DESTINATION . LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 endif()
 
 if(MUSIC_APP_DEPLOY_RUNTIME AND NOT ANDROID AND NOT IOS)
@@ -181,7 +212,4 @@ if(NOT ANDROID)
         endif()
         include(CPack)
     endif()
-endif()
-if(WIN32)
-    target_link_libraries(MusicApp PRIVATE Crypt32)
 endif()
