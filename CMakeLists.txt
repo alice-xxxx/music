@@ -65,9 +65,12 @@ if(WIN32)
     if(music_app_cppwinrt_paths)
         list(GET music_app_cppwinrt_paths 0 music_app_cppwinrt_path)
         target_sources(MusicApp PRIVATE src/platform/BackgroundPlayback_windows.cpp)
-        target_include_directories(MusicApp PRIVATE "${music_app_cppwinrt_path}")
+        target_include_directories(MusicApp PRIVATE
+            "$<$<COMPILE_LANGUAGE:CXX>:${music_app_cppwinrt_path}>")
         target_link_libraries(MusicApp PRIVATE runtimeobject ole32)
-        target_compile_definitions(MusicApp PRIVATE WINRT_LEAN_AND_MEAN NOMINMAX)
+        target_compile_definitions(MusicApp PRIVATE
+            "$<$<COMPILE_LANGUAGE:CXX>:WINRT_LEAN_AND_MEAN>"
+            "$<$<COMPILE_LANGUAGE:CXX>:NOMINMAX>")
     else()
         message(WARNING "Windows SDK C++/WinRT headers were not found; Windows SMTC is disabled")
     endif()
