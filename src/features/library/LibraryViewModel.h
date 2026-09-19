@@ -15,6 +15,7 @@ class LibraryViewModel final : public QObject
     Q_PROPERTY(bool hasMore READ hasMore NOTIFY changed)
     Q_PROPERTY(QVariantMap source READ source NOTIFY changed)
     Q_PROPERTY(QString coverUrl READ coverUrl NOTIFY changed)
+    Q_PROPERTY(QString description READ description NOTIFY changed)
     Q_PROPERTY(bool actionBusy READ actionBusy NOTIFY actionChanged)
     Q_PROPERTY(bool actionUncertain READ actionUncertain NOTIFY actionChanged)
     Q_PROPERTY(QString actionMessage READ actionMessage NOTIFY actionChanged)
@@ -53,6 +54,10 @@ class LibraryViewModel final : public QObject
     {
         return m_selected.value("cover").toString();
     }
+    QString description() const
+    {
+        return m_selected.value("description").toString();
+    }
     bool actionBusy() const
     {
         return m_actionBusy;
@@ -76,6 +81,7 @@ class LibraryViewModel final : public QObject
     Q_INVOKABLE void retry();
     Q_INVOKABLE void createPlaylist(const QString &name);
     Q_INVOKABLE void deleteSelectedPlaylist();
+    Q_INVOKABLE void updateSelectedPlaylist(const QString &name, const QString &description);
     Q_INVOKABLE void addTrack(int playlistIndex, const QVariantMap &track);
     Q_INVOKABLE void removeTrack(int trackIndex);
     Q_INVOKABLE void confirmAction();
@@ -105,7 +111,8 @@ class LibraryViewModel final : public QObject
     Track m_addedTrack;
     bool m_actionBusy = false, m_actionUncertain = false;
     bool m_actionSucceeded = false;
-    QString m_actionMessage, m_actionKind, m_actionTarget, m_actionName, m_actionTrackKey;
+    QString m_actionMessage, m_actionKind, m_actionTarget, m_actionName, m_actionDescription,
+        m_actionTrackKey;
     QString m_actionFileId;
     quint64 m_actionGeneration = 0;
 };

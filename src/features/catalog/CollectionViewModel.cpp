@@ -28,12 +28,18 @@ CollectionViewModel::CollectionViewModel(KuGouApi *api, CatalogService *catalog,
                 m_title.clear();
                 m_cover.clear();
                 m_description.clear();
+                m_metadata.clear();
                 m_error.clear();
                 m_detailError.clear();
                 m_id.clear();
                 m_loading = false;
                 m_detailLoading = false;
                 m_hasMore = false;
+                m_favoriteBusy = false;
+                m_favorited = false;
+                m_canUnfavorite = false;
+                m_favoriteListId.clear();
+                m_favoriteMessage.clear();
                 emit changed();
                 emit scopeReset();
             });
@@ -63,7 +69,14 @@ void CollectionViewModel::openPlaylist(const QVariantMap &playlist)
 {
     m_backStack.clear();
     openCollection(QStringLiteral("playlist"), playlist.value("id").toString(),
-                   playlist.value("title").toString(), playlist.value("coverUrl").toString());
+                   playlist.value("title").toString(), playlist.value("coverUrl").toString(),
+                   playlist);
+}
+void CollectionViewModel::openRank(const QVariantMap &rank)
+{
+    m_backStack.clear();
+    openCollection(QStringLiteral("rank"), rank.value("id").toString(),
+                   rank.value("title").toString(), rank.value("coverUrl").toString(), rank);
 }
 void CollectionViewModel::openNestedAlbum(const QVariantMap &track, qreal scrollPosition)
 {
@@ -75,11 +88,15 @@ void CollectionViewModel::openNestedAlbum(const QVariantMap &track, qreal scroll
                                    {"title", m_title},
                                    {"cover", m_cover},
                                    {"description", m_description},
+                                   {"metadata", m_metadata},
                                    {"error", m_error},
                                    {"detailError", m_detailError},
                                    {"tracks", m_tracks},
                                    {"page", m_page},
                                    {"more", m_hasMore},
+                                   {"favorited", m_favorited},
+                                   {"canUnfavorite", m_canUnfavorite},
+                                   {"favoriteListId", m_favoriteListId},
                                    {"position", scrollPosition}});
     if (m_backStack.size() > 8)
         m_backStack.removeFirst();
@@ -101,12 +118,16 @@ QVariantMap CollectionViewModel::captureState() const
             {"title", m_title},
             {"cover", m_cover},
             {"description", m_description},
+            {"metadata", m_metadata},
             {"error", m_error},
             {"detailError", m_detailError},
             {"tracks", m_tracks},
             {"page", m_page},
             {"more", m_hasMore},
             {"position", m_scrollPosition},
+            {"favorited", m_favorited},
+            {"canUnfavorite", m_canUnfavorite},
+            {"favoriteListId", m_favoriteListId},
             {"backStack", m_backStack}};
 }
 void CollectionViewModel::restoreState(const QVariantMap &state)
@@ -119,6 +140,7 @@ void CollectionViewModel::restoreState(const QVariantMap &state)
     m_title = state.value("title").toString();
     m_cover = state.value("cover").toString();
     m_description = state.value("description").toString();
+    m_metadata = state.value("metadata").toMap();
     m_tracks = state.value("tracks").toList();
     m_page = state.value("page").toInt();
     m_hasMore = state.value("more").toBool();
@@ -127,14 +149,25 @@ void CollectionViewModel::restoreState(const QVariantMap &state)
     m_detailLoading = false;
     m_error = state.value("error").toString();
     m_detailError = state.value("detailError").toString();
+    m_favoriteBusy = false;
+    m_favorited = state.value("favorited").toBool();
+    m_canUnfavorite = state.value("canUnfavorite").toBool();
+    m_favoriteListId = state.value("favoriteListId").toString();
+    m_favoriteMessage.clear();
     emit changed();
     if (m_page == 0 && !m_id.isEmpty())
         request(1);
     if (m_kind == QStringLiteral("artist") && m_cover.isEmpty())
         requestArtistDetail();
+    if (m_kind == QStringLiteral("playlist"))
+    {
+        requestPlaylistDetail();
+        refreshFavoriteState();
+    }
 }
 void CollectionViewModel::openCollection(const QString &kind, const QString &id,
-                                         const QString &title, const QString &cover)
+                                         const QString &title, const QString &cover,
+                                         const QVariantMap &metadata)
 {
     if (id.isEmpty())
         return;
@@ -146,15 +179,26 @@ void CollectionViewModel::openCollection(const QString &kind, const QString &id,
         m_title = title;
         m_cover = cover;
         m_description.clear();
+        m_metadata = metadata;
         m_detailError.clear();
         m_detailLoading = false;
         m_scrollPosition = 0;
         m_tracks.clear();
         m_page = 0;
         m_hasMore = false;
+        m_favoriteBusy = false;
+        m_favorited = false;
+        m_canUnfavorite = false;
+        m_favoriteListId.clear();
+        m_favoriteMessage.clear();
         request(1);
         if (m_kind == QStringLiteral("artist"))
             requestArtistDetail();
+        else if (m_kind == QStringLiteral("playlist"))
+        {
+            requestPlaylistDetail();
+            refreshFavoriteState();
+        }
     }
     emit opened();
 }
@@ -172,6 +216,9 @@ void CollectionViewModel::retry()
         if (m_kind == QStringLiteral("artist") && !m_detailLoading &&
             (!m_detailError.isEmpty() || m_cover.isEmpty()))
             requestArtistDetail();
+        if (m_kind == QStringLiteral("playlist") && !m_detailLoading &&
+            (!m_detailError.isEmpty() || m_metadata.value("creatorListId").toString().isEmpty()))
+            requestPlaylistDetail();
     }
 }
 void CollectionViewModel::requestArtistDetail()
@@ -199,6 +246,119 @@ void CollectionViewModel::requestArtistDetail()
                             }
                             emit changed();
                         });
+}
+void CollectionViewModel::requestPlaylistDetail()
+{
+    if (m_detailLoading || m_kind != QStringLiteral("playlist"))
+        return;
+    m_detailLoading = true;
+    m_detailError.clear();
+    emit changed();
+    const auto generation = m_generation;
+    m_api->playlistDetail(
+        m_id,
+        [this, guard = QPointer<CollectionViewModel>(this), generation](QVariantMap detail,
+                                                                        QString error)
+        {
+            if (!guard || generation != m_generation)
+                return;
+            m_detailLoading = false;
+            if (!error.isEmpty())
+                m_detailError = error;
+            else
+            {
+                for (auto it = detail.cbegin(); it != detail.cend(); ++it)
+                    if (!it.value().toString().isEmpty())
+                        m_metadata.insert(it.key(), it.value());
+                m_title = detail.value("title", m_title).toString();
+                m_cover = detail.value("coverUrl", m_cover).toString();
+                m_description = detail.value("description").toString();
+            }
+            emit changed();
+        });
+}
+void CollectionViewModel::refreshFavoriteState(int page)
+{
+    if (m_kind != QStringLiteral("playlist") || !m_api->authenticated())
+        return;
+    const auto generation = m_generation;
+    if (page == 1)
+    {
+        m_favoriteBusy = true;
+        m_favorited = false;
+        m_canUnfavorite = false;
+        m_favoriteListId.clear();
+        emit changed();
+    }
+    m_api->userPlaylists(
+        [this, guard = QPointer<CollectionViewModel>(this), generation,
+         page](QList<KuGouApi::Playlist> rows, QString code, QString message)
+        {
+            if (!guard || generation != m_generation)
+                return;
+            if (!code.isEmpty())
+            {
+                m_favoriteBusy = false;
+                m_favoriteMessage = message;
+                emit changed();
+                return;
+            }
+            for (const auto &playlist : rows)
+                if (playlist.globalCollectionId == m_id)
+                {
+                    m_favorited = true;
+                    m_canUnfavorite = playlist.type == 1 && !playlist.listId.isEmpty();
+                    m_favoriteListId = playlist.listId;
+                    m_favoriteBusy = false;
+                    emit changed();
+                    return;
+                }
+            if (rows.size() == 30 && page < 100)
+            {
+                refreshFavoriteState(page + 1);
+                return;
+            }
+            m_favoriteBusy = false;
+            emit changed();
+        },
+        page);
+}
+void CollectionViewModel::toggleFavorite()
+{
+    if (m_kind != QStringLiteral("playlist") || m_favoriteBusy)
+        return;
+    if (m_favorited && !m_canUnfavorite)
+        return;
+    if (!m_api->authenticated())
+    {
+        emit loginRequired();
+        return;
+    }
+    m_favoriteBusy = true;
+    m_favoriteMessage = m_favorited ? QStringLiteral("正在取消收藏…")
+                                    : QStringLiteral("正在收藏歌单…");
+    emit changed();
+    const auto generation = m_generation;
+    auto callback = [this, guard = QPointer<CollectionViewModel>(this), generation](QString code,
+                                                                                    QString message)
+    {
+        if (!guard || generation != m_generation)
+            return;
+        if (!code.isEmpty())
+        {
+            m_favoriteBusy = false;
+            m_favoriteMessage = message;
+            emit changed();
+            return;
+        }
+        m_favoriteMessage = m_favorited ? QStringLiteral("已取消收藏")
+                                        : QStringLiteral("已收藏到音乐库");
+        refreshFavoriteState();
+    };
+    if (m_favorited)
+        m_api->deletePlaylist(m_favoriteListId, std::move(callback));
+    else
+        m_api->favoritePlaylist(m_metadata, std::move(callback));
 }
 void CollectionViewModel::request(int page)
 {
@@ -231,6 +391,8 @@ void CollectionViewModel::request(int page)
     };
     if (m_kind == QStringLiteral("artist"))
         m_api->artistTracks(m_id, callback, page);
+    else if (m_kind == QStringLiteral("rank"))
+        m_api->rankTracks(m_id, callback, page);
     else if (m_kind == QStringLiteral("playlist"))
         m_api->playlistTracks(m_id, {}, callback, page);
     else

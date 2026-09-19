@@ -10,6 +10,8 @@ import "components"
 ApplicationWindow {
     id: window
     required property var collectionViewModel
+    required property var commentsViewModel
+    required property var discoverViewModel
     required property var favorites
     required property var appSettings
     required property var playbackController
@@ -17,8 +19,9 @@ ApplicationWindow {
     required property var searchViewModel
     required property var libraryViewModel
 
-    readonly property int searchPage: 0
-    readonly property int libraryPage: 1
+    readonly property int homePage: 0
+    readonly property int searchPage: 1
+    readonly property int libraryPage: 2
     readonly property int noOverlay: -1
     readonly property int nowPlayingOverlay: 0
     readonly property int settingsOverlay: 1
@@ -27,7 +30,7 @@ ApplicationWindow {
     readonly property bool mobilePlatform: Qt.platform.os === "android" || iosPlatform
     property var pendingAddTrack: ({})
     property var navigationHistory: []
-    property int currentPage: Math.max(searchPage, Math.min(libraryPage, appSettings.lastPage))
+    property int currentPage: Math.max(homePage, Math.min(libraryPage, appSettings.lastPage))
     property int overlayPage: noOverlay
     readonly property bool compact: width < 600
     readonly property bool typing: activeFocusItem instanceof TextInput
@@ -99,7 +102,10 @@ ApplicationWindow {
             openAlbum(entry);
         else if (entry.kind === "artist")
             openArtist(entry);
-        else {
+        else if (entry.kind === "rank") {
+            rememberPage();
+            collectionViewModel.openRank(entry);
+        } else {
             rememberPage();
             collectionViewModel.openPlaylist(entry);
         }
@@ -169,7 +175,8 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.leftMargin: 16
             anchors.verticalCenter: parent.verticalCenter
-            text: window.currentPage === window.searchPage ? "搜索" : "音乐库"
+            text: window.currentPage === window.homePage ? "发现" :
+                  window.currentPage === window.searchPage ? "搜索" : "音乐库"
             font.pixelSize: 20
             font.bold: true
         }
@@ -228,6 +235,13 @@ ApplicationWindow {
             ColumnLayout {
                 width: parent.width
                 NavigationTab {
+                    text: "发现"
+                    checkable: true
+                    checked: window.currentPage === window.homePage
+                    Layout.fillWidth: true
+                    onClicked: window.currentPage = window.homePage
+                }
+                NavigationTab {
                     text: "搜索"
                     checkable: true
                     checked: window.currentPage === window.searchPage
@@ -268,6 +282,14 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 StackLayout {
                     currentIndex: window.currentPage
+                    DiscoverPage {
+                        showHeading: !window.compact
+                        discoverViewModel: window.discoverViewModel
+                        playbackController: window.playbackController
+                        onEntryRequested: entry => window.openEntry(entry)
+                        onAlbumRequested: track => window.openAlbum(track)
+                        onAddToPlaylistRequested: track => window.requestAddTrack(track)
+                    }
                     SearchPage {
                         showHeading: !window.compact
                         onEntryRequested: entry => window.openEntry(entry)
@@ -311,6 +333,9 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 onCurrentIndexChanged: window.currentPage = currentIndex
                 NavigationTab {
+                    text: "发现"
+                }
+                NavigationTab {
                     text: "搜索"
                 }
                 NavigationTab {
@@ -324,6 +349,22 @@ ApplicationWindow {
         function onLoginRequested() {
             loginDialog.open();
         }
+    }
+    function openComments(kind, id, title) {
+        if (!id)
+            return;
+        commentsViewModel.open(kind, id, title);
+        commentsDialog.open();
+    }
+    CommentsDialog {
+        id: commentsDialog
+        commentsViewModel: window.commentsViewModel
+        sessionManager: window.sessionManager
+        onLoginRequested: loginDialog.open()
+    }
+    Connections {
+        target: window.collectionViewModel
+        function onLoginRequired() { loginDialog.open(); }
     }
     Connections {
         target: window.libraryViewModel
@@ -355,6 +396,8 @@ ApplicationWindow {
     Component {
         id: nowPlayingComponent
         NowPlayingPage {
+            onCommentsRequested: track => window.openComments("song", track.albumAudioId,
+                                                              track.title)
             onArtistRequested: artist => window.openArtist(artist)
             onAlbumRequested: track => {
                 window.openAlbum(track);
@@ -374,6 +417,7 @@ ApplicationWindow {
     Component {
         id: collectionComponent
         CollectionPage {
+            onCommentsRequested: (kind, id, title) => window.openComments(kind, id, title)
             onAddToPlaylistRequested: track => window.requestAddTrack(track)
             collection: window.collectionViewModel
             player: window.playbackController

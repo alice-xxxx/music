@@ -24,8 +24,13 @@ Page {
     padding: width < 600 ? 16 : 32
     Timer {
         id: debounce
-        interval: 300
+        interval: 600
         onTriggered: root.searchViewModel.submitSearch()
+    }
+    Timer {
+        id: suggestionDebounce
+        interval: 180
+        onTriggered: root.searchViewModel.requestSuggestions()
     }
     Timer {
         id: waitDelay
@@ -82,13 +87,19 @@ Page {
                 onTextEdited: {
                     root.searchViewModel.query = text;
                     debounce.stop();
-                    if (!inputMethodComposing)
+                    suggestionDebounce.stop();
+                    if (!inputMethodComposing) {
+                        suggestionDebounce.restart();
                         debounce.restart();
+                    }
                 }
-                onInputMethodComposingChanged: if (!inputMethodComposing)
+                onInputMethodComposingChanged: if (!inputMethodComposing) {
+                                                   suggestionDebounce.restart();
                                                    debounce.restart()
+                                               }
                 onAccepted: {
                     debounce.stop();
+                    suggestionDebounce.stop();
                     root.searchViewModel.submitSearch();
                 }
                 Accessible.name: "搜索关键词"
@@ -102,9 +113,33 @@ Page {
                 Accessible.name: "清除搜索关键词"
                 onClicked: {
                     debounce.stop();
+                    suggestionDebounce.stop();
                     root.searchViewModel.query = "";
                     root.searchViewModel.submitSearch();
                     input.forceActiveFocus();
+                }
+            }
+        }
+        Frame {
+            visible: input.activeFocus && root.searchViewModel.suggestions.length > 0
+            Layout.fillWidth: true
+            padding: 6
+            Flow {
+                width: parent.width
+                spacing: 6
+                Repeater {
+                    model: root.searchViewModel.suggestions.slice(0, 8)
+                    Button {
+                        required property string modelData
+                        text: modelData
+                        flat: true
+                        onClicked: {
+                            debounce.stop();
+                            suggestionDebounce.stop();
+                            root.searchViewModel.query = modelData;
+                            root.searchViewModel.submitSearch();
+                        }
+                    }
                 }
             }
         }
@@ -116,6 +151,7 @@ Page {
                 if (currentIndex < 0)
                     return;
                 debounce.stop();
+                suggestionDebounce.stop();
                 root.searchViewModel.category = ["song", "album", "artist",
                                                  "playlist"][currentIndex];
             }
@@ -157,6 +193,31 @@ Page {
                 Button {
                     required property string modelData
                     text: modelData
+                    onClicked: {
+                        root.searchViewModel.query = modelData;
+                        root.searchViewModel.submitSearch();
+                    }
+                }
+            }
+        }
+        Label {
+            visible: root.searchViewModel.status === 0
+                     && root.searchViewModel.hotKeywords.length > 0
+            text: "大家都在搜"
+            color: Theme.textSecondary
+            Layout.fillWidth: true
+        }
+        Flow {
+            visible: root.searchViewModel.status === 0
+                     && root.searchViewModel.hotKeywords.length > 0
+            Layout.fillWidth: true
+            spacing: 8
+            Repeater {
+                model: root.searchViewModel.hotKeywords.slice(0, 12)
+                Button {
+                    required property string modelData
+                    text: modelData
+                    flat: true
                     onClicked: {
                         root.searchViewModel.query = modelData;
                         root.searchViewModel.submitSearch();

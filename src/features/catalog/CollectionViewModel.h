@@ -17,6 +17,10 @@ class CollectionViewModel final : public QObject
     Q_PROPERTY(QString kind READ kind NOTIFY changed)
     Q_PROPERTY(QString description READ description NOTIFY changed)
     Q_PROPERTY(qreal scrollPosition READ scrollPosition NOTIFY changed)
+    Q_PROPERTY(bool favoriteBusy READ favoriteBusy NOTIFY changed)
+    Q_PROPERTY(bool favorited READ favorited NOTIFY changed)
+    Q_PROPERTY(bool canUnfavorite READ canUnfavorite NOTIFY changed)
+    Q_PROPERTY(QString favoriteMessage READ favoriteMessage NOTIFY changed)
   public:
     CollectionViewModel(KuGouApi *api, CatalogService *catalog, QObject *parent = nullptr);
     QVariantList tracks() const
@@ -59,6 +63,7 @@ class CollectionViewModel final : public QObject
     Q_INVOKABLE void open(const QVariantMap &track);
     Q_INVOKABLE void openArtist(const QVariantMap &artist);
     Q_INVOKABLE void openPlaylist(const QVariantMap &playlist);
+    Q_INVOKABLE void openRank(const QVariantMap &rank);
     Q_INVOKABLE void openNestedAlbum(const QVariantMap &track, qreal scrollPosition);
     Q_INVOKABLE bool goBack();
     Q_INVOKABLE QVariantMap captureState() const;
@@ -73,20 +78,29 @@ class CollectionViewModel final : public QObject
     }
     Q_INVOKABLE void loadMore();
     Q_INVOKABLE void retry();
+    Q_INVOKABLE void toggleFavorite();
+    bool favoriteBusy() const { return m_favoriteBusy; }
+    bool favorited() const { return m_favorited; }
+    bool canUnfavorite() const { return m_canUnfavorite; }
+    QString favoriteMessage() const { return m_favoriteMessage; }
   signals:
     void changed();
     void opened();
     void scopeReset();
+    void loginRequired();
 
   private:
     void request(int page);
     void openCollection(const QString &kind, const QString &id, const QString &title,
-                        const QString &cover);
+                        const QString &cover, const QVariantMap &metadata = {});
     void requestArtistDetail();
+    void requestPlaylistDetail();
+    void refreshFavoriteState(int page = 1);
     KuGouApi *m_api;
     CatalogService *m_catalog;
     QString m_id, m_title, m_cover, m_error, m_detailError;
     QString m_kind = QStringLiteral("album"), m_description;
+    QVariantMap m_metadata;
     QVariantList m_backStack;
     qreal m_scrollPosition = 0;
     QVariantList m_tracks;
@@ -94,5 +108,9 @@ class CollectionViewModel final : public QObject
     bool m_loading = false;
     bool m_detailLoading = false;
     bool m_hasMore = false;
+    bool m_favoriteBusy = false;
+    bool m_favorited = false;
+    bool m_canUnfavorite = false;
+    QString m_favoriteListId, m_favoriteMessage;
     quint64 m_generation = 0;
 };

@@ -1000,6 +1000,8 @@ void PlaybackController::loadCollectionPage(bool advance)
         m_api->albumTracks(id, callback, page);
     else if (kind == QStringLiteral("artist"))
         m_api->artistTracks(id, callback, page);
+    else if (kind == QStringLiteral("rank"))
+        m_api->rankTracks(id, callback, page);
     else
         m_api->playlistTracks(m_source.value("globalId").toString(), id, callback, page);
 }

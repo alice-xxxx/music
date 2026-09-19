@@ -1,6 +1,8 @@
 #pragma once
 #include "ApiClient.h"
 #include "domain/Track.h"
+#include <QStringList>
+#include <QVariantMap>
 #include <functional>
 #include <memory>
 
@@ -15,7 +17,13 @@ class KuGouApi final : public QObject
         QString listId;
         QString title;
         QString cover;
+        QString description;
+        QString creatorUserId;
+        QString creatorListId;
         int trackCount = 0;
+        qint64 totalVersion = 0;
+        int type = 0;
+        int sort = 0;
     };
     explicit KuGouApi(QUrl serviceBase, QObject *parent = nullptr);
     void setServiceBase(QUrl serviceBase);
@@ -25,6 +33,10 @@ class KuGouApi final : public QObject
     }
     QString scopeKey() const;
     QString storageError() const;
+    bool authenticated() const
+    {
+        return m_authenticated;
+    }
     void search(const QString &keywords, SearchCallback callback, int page = 1);
     void cancelSearch()
     {
@@ -36,6 +48,17 @@ class KuGouApi final : public QObject
     void artistDetail(const QString &artistId, std::function<void(QVariantMap, QString)> callback);
     void searchEntries(const QString &keywords, const QString &kind,
                        std::function<void(QVariantList, QString, QString)> callback, int page = 1);
+    void hotSearches(std::function<void(QStringList, QString)> callback);
+    void searchSuggestions(const QString &keywords,
+                           std::function<void(QStringList, QString)> callback);
+    void dailyRecommendations(SearchCallback callback);
+    void rankEntries(std::function<void(QVariantList, QString)> callback);
+    void rankTracks(const QString &rankId, SearchCallback callback, int page = 1);
+    void popularPlaylists(std::function<void(QVariantList, QString)> callback, int page = 1);
+    void comments(const QString &kind, const QString &id,
+                  std::function<void(QVariantList, QString, QString)> callback, int page = 1);
+    void sendComment(const QString &kind, const QString &id, const QString &name,
+                     const QString &content, std::function<void(QString, QString)> callback);
     void resolveSong(const QString &hash, const QString &albumAudioId,
                      std::function<void(QUrl, QString)> callback,
                      const QString &quality = QStringLiteral("128"));
@@ -44,9 +67,15 @@ class KuGouApi final : public QObject
                        int page = 1);
     void playlistTracks(const QString &globalCollectionId, const QString &listId,
                         SearchCallback callback, int page = 1);
+    void playlistDetail(const QString &globalCollectionId,
+                        std::function<void(QVariantMap, QString)> callback);
     using WriteCallback = std::function<void(QString, QString)>;
     void createPlaylist(const QString &name, WriteCallback callback);
+    void favoritePlaylist(const QVariantMap &playlist, WriteCallback callback);
     void deletePlaylist(const QString &listId, WriteCallback callback);
+    void updatePlaylist(const QString &listId, qint64 totalVersion, int type,
+                        const QString &name, const QString &description,
+                        WriteCallback callback);
     void addPlaylistTrack(const QString &listId, const Track &track, WriteCallback callback);
     void removePlaylistTrack(const QString &listId, const QString &fileId, WriteCallback callback);
     void createLoginQr(std::function<void(QString, QString, QString)> callback);
@@ -82,5 +111,6 @@ class KuGouApi final : public QObject
     };
     QList<PendingResolve> m_pendingResolves;
     bool m_authenticated = false;
+    bool m_userAuthAttempted = false;
     std::unique_ptr<ApiClient> m_loginClient;
 };

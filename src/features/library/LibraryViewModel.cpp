@@ -60,7 +60,13 @@ void LibraryViewModel::requestPlaylists(int page)
                                                {"listId", row.listId},
                                                {"title", row.title},
                                                {"cover", row.cover},
-                                               {"count", row.trackCount}});
+                                               {"description", row.description},
+                                               {"creatorUserId", row.creatorUserId},
+                                               {"creatorListId", row.creatorListId},
+                                               {"count", row.trackCount},
+                                               {"totalVersion", row.totalVersion},
+                                               {"type", row.type},
+                                               {"sort", row.sort}});
             emit changed();
         },
         page);
@@ -198,6 +204,31 @@ void LibraryViewModel::deleteSelectedPlaylist()
                 finishWrite(code, message);
         });
 }
+void LibraryViewModel::updateSelectedPlaylist(const QString &name, const QString &description)
+{
+    const QString normalizedName = name.trimmed();
+    if (m_actionBusy || m_actionUncertain || normalizedName.isEmpty() ||
+        m_selected.value("listId").toString().isEmpty())
+        return;
+    ++m_actionGeneration;
+    m_actionKind = QStringLiteral("update");
+    m_actionTarget = m_selected.value("listId").toString();
+    m_actionName = normalizedName;
+    m_actionDescription = description.trimmed();
+    m_actionSucceeded = false;
+    m_actionBusy = true;
+    m_actionMessage = QStringLiteral("正在更新歌单…");
+    emit actionChanged();
+    const auto generation = m_actionGeneration;
+    m_api->updatePlaylist(
+        m_actionTarget, m_selected.value("totalVersion").toLongLong(),
+        m_selected.value("type").toInt(), m_actionName, m_actionDescription,
+        [this, guard = QPointer<LibraryViewModel>(this), generation](QString code, QString message)
+        {
+            if (guard && generation == m_actionGeneration)
+                finishWrite(code, message);
+        });
+}
 void LibraryViewModel::addTrack(int playlistIndex, const QVariantMap &data)
 {
     if (m_actionBusy || m_actionUncertain || playlistIndex < 0 ||
@@ -292,11 +323,32 @@ void LibraryViewModel::completeAction(bool confirmed)
         m_actionMessage = QStringLiteral("已删除“%1”").arg(m_actionName);
     else if (m_actionKind == QStringLiteral("add"))
         m_actionMessage = QStringLiteral("已添加到“%1”").arg(m_actionName);
+    else if (m_actionKind == QStringLiteral("update"))
+        m_actionMessage = QStringLiteral("已更新歌单“%1”").arg(m_actionName);
     else
         m_actionMessage = QStringLiteral("已从歌单移除“%1”").arg(m_actionName);
     emit actionChanged();
     if (!confirmed)
         return;
+    if (m_actionKind == QStringLiteral("update"))
+    {
+        m_title = m_actionName;
+        m_selected.insert(QStringLiteral("title"), m_actionName);
+        m_selected.insert(QStringLiteral("description"), m_actionDescription);
+        for (auto &row : m_playlists)
+        {
+            auto playlist = row.toMap();
+            if (playlist.value("listId").toString() == m_actionTarget)
+            {
+                playlist.insert(QStringLiteral("title"), m_actionName);
+                playlist.insert(QStringLiteral("description"), m_actionDescription);
+                row = playlist;
+                break;
+            }
+        }
+        emit changed();
+        return;
+    }
     if (m_actionKind == QStringLiteral("delete") &&
         m_selected.value("listId").toString() == m_actionTarget)
         closePlaylist();
@@ -371,7 +423,14 @@ void LibraryViewModel::confirmPage(int page)
                     completeAction(false);
                     return;
                 }
-                if (m_actionKind != QStringLiteral("delete") && playlist.title == m_actionName)
+                if (m_actionKind == QStringLiteral("update") &&
+                    playlist.listId == m_actionTarget && playlist.title == m_actionName)
+                {
+                    completeAction(true);
+                    return;
+                }
+                if (m_actionKind != QStringLiteral("delete") &&
+                    m_actionKind != QStringLiteral("update") && playlist.title == m_actionName)
                 {
                     if (m_actionKind == QStringLiteral("prepareCreate"))
                     {

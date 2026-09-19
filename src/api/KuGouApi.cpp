@@ -57,6 +57,52 @@ QString normalizedCover(QString cover)
                ? url.toString().replace(QStringLiteral("%7Bsize%7D"), QStringLiteral("{size}"))
                : QString{};
 }
+QJsonArray findFirstArray(const QJsonValue &value,
+                          std::initializer_list<const char *> preferredKeys, int depth = 0)
+{
+    if (depth > 6)
+        return {};
+    if (value.isArray())
+        return value.toArray();
+    if (!value.isObject())
+        return {};
+    const auto object = value.toObject();
+    for (const char *key : preferredKeys)
+    {
+        const auto candidate = object.value(QLatin1String(key));
+        if (candidate.isArray() && !candidate.toArray().isEmpty())
+            return candidate.toArray();
+    }
+    for (auto it = object.begin(); it != object.end(); ++it)
+        if (it.value().isObject())
+            if (auto rows = findFirstArray(it.value(), preferredKeys, depth + 1); !rows.isEmpty())
+                return rows;
+    return {};
+}
+void collectKeywords(const QJsonValue &value, QStringList &keywords, int depth = 0)
+{
+    if (depth > 7 || keywords.size() >= 20)
+        return;
+    if (value.isArray())
+    {
+        for (const auto &item : value.toArray())
+            collectKeywords(item, keywords, depth + 1);
+        return;
+    }
+    if (!value.isObject())
+        return;
+    const auto object = value.toObject();
+    for (const auto &key : {"keyword", "keywords", "name", "text", "tip", "HintInfo",
+                            "hint", "query", "word"})
+    {
+        const QString candidate = object.value(QLatin1String(key)).toString().trimmed();
+        if (!candidate.isEmpty() && candidate.size() <= 80 && !keywords.contains(candidate))
+            keywords.append(candidate);
+    }
+    for (auto it = object.begin(); it != object.end(); ++it)
+        if (it.value().isArray() || it.value().isObject())
+            collectKeywords(it.value(), keywords, depth + 1);
+}
 QList<Track> parseTracks(const QJsonObject &root)
 {
     QJsonArray rows;
@@ -70,6 +116,9 @@ QList<Track> parseTracks(const QJsonObject &root)
     }
     if (rows.isEmpty() && data.isArray())
         rows = data.toArray();
+    if (rows.isEmpty())
+        rows = findFirstArray(root, {"song_list", "songs", "audio_list", "audios", "items",
+                                     "lists", "info", "list"});
     QList<Track> tracks;
     for (const auto &value : rows)
     {
@@ -174,6 +223,128 @@ QString findMediaUrl(const QJsonValue &value, int depth = 0)
     }
     return {};
 }
+QString findMediaUrlForQuality(const QJsonValue &value, const QString &quality, int depth = 0)
+{
+    if (depth > 6)
+        return {};
+    if (value.isObject())
+    {
+        const auto object = value.toObject();
+        const QString objectQuality =
+            stringField(object, {"quality", "quality_type", "audio_quality", "type"});
+        if (objectQuality.compare(quality, Qt::CaseInsensitive) == 0)
+            if (const auto url = findMediaUrl(object); !url.isEmpty())
+                return url;
+        for (const auto &key : {"url", "play_url", "playUrl"})
+        {
+            const auto named = object.value(quality);
+            if (!named.isUndefined())
+                if (const auto url = findMediaUrl(named); !url.isEmpty())
+                    return url;
+            const auto prefixed = object.value(quality + QLatin1Char('_') + QLatin1String(key));
+            if (!prefixed.isUndefined())
+                if (const auto url = findMediaUrl(prefixed); !url.isEmpty())
+                    return url;
+        }
+        for (auto it = object.begin(); it != object.end(); ++it)
+            if (it.value().isArray() || it.value().isObject())
+                if (const auto url = findMediaUrlForQuality(it.value(), quality, depth + 1);
+                    !url.isEmpty())
+                    return url;
+    }
+    else if (value.isArray())
+        for (const auto &item : value.toArray())
+            if (const auto url = findMediaUrlForQuality(item, quality, depth + 1); !url.isEmpty())
+                return url;
+    return {};
+}
+QUrl mediaUrl(const ApiClient::Response &response, const QString &quality)
+{
+    const auto root = response.json.object();
+    const QJsonValue payload = root.value(QStringLiteral("data")).isUndefined()
+                                   ? QJsonValue(root)
+                                   : root.value(QStringLiteral("data"));
+    QString value = findMediaUrlForQuality(payload, quality);
+    if (value.isEmpty())
+        value = findMediaUrl(payload);
+    QUrl url(value);
+    if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty() ||
+        (url.scheme() != QStringLiteral("https") && url.scheme() != QStringLiteral("http")))
+        return {};
+    return url;
+}
+QVariantMap playlistEntry(const QJsonObject &row)
+{
+    const QString id = stringField(
+        row, {"global_collection_id", "globalCollectionId", "gid", "specialid", "id"});
+    const QString title =
+        stringField(row, {"specialname", "name", "title", "playlist_name"});
+    if (id.isEmpty() || title.isEmpty())
+        return {};
+    const QString cover = normalizedCover(
+        stringField(row, {"img", "pic", "cover", "cover_url", "sizable_cover"}));
+    return {{"kind", "playlist"},
+            {"id", id},
+            {"globalId", id},
+            {"title", title},
+            {"name", title},
+            {"subtitle", stringField(row, {"intro", "description", "desc"})},
+            {"description", stringField(row, {"intro", "description", "desc"})},
+            {"coverUrl", cover},
+            {"cover", cover},
+            {"count", stringField(row, {"song_count", "count", "total"}).toInt()},
+            {"creatorUserId", stringField(row, {"list_create_userid", "userid", "create_userid"})},
+            {"creatorListId", stringField(row, {"list_create_listid", "listid", "list_id"})},
+            {"creatorGid", stringField(row, {"list_create_gid", "gid"})}};
+}
+
+QJsonArray commentRows(const QJsonObject &root, bool *found)
+{
+    const auto data = root.value(QStringLiteral("data"));
+    const auto container = data.isObject() ? data.toObject() : root;
+    for (const char *key : {"comments", "comment_list", "commentList", "list", "info"})
+    {
+        const auto value = container.value(QLatin1String(key));
+        if (value.isArray())
+        {
+            *found = true;
+            return value.toArray();
+        }
+        if (value.isObject())
+            for (const char *nested : {"list", "comments", "info"})
+                if (value.toObject().value(QLatin1String(nested)).isArray())
+                {
+                    *found = true;
+                    return value.toObject().value(QLatin1String(nested)).toArray();
+                }
+    }
+    if (data.isArray())
+    {
+        *found = true;
+        return data.toArray();
+    }
+    *found = false;
+    return {};
+}
+
+QVariantMap commentEntry(const QJsonObject &row)
+{
+    const auto user = row.value(QStringLiteral("user")).toObject();
+    const auto userInfo = user.isEmpty() ? row.value(QStringLiteral("userinfo")).toObject() : user;
+    const auto content = stringField(row, {"content", "comment", "text", "msg"}).trimmed();
+    if (content.isEmpty())
+        return {};
+    QString author = stringField(row, {"nickname", "user_name", "username", "nick_name"});
+    if (author.isEmpty())
+        author = stringField(userInfo, {"nickname", "nick_name", "name", "username"});
+    if (author.isEmpty())
+        author = QStringLiteral("酷狗用户");
+    return {{"id", stringField(row, {"id", "comment_id", "tid"})},
+            {"author", author},
+            {"content", content},
+            {"time", stringField(row, {"addtime", "create_time", "time", "date"})},
+            {"likes", stringField(row, {"like_count", "liked_count", "likedCount", "support"})}};
+}
 
 } // namespace
 
@@ -196,6 +367,7 @@ void KuGouApi::setServiceBase(QUrl serviceBase)
                               ? RegistrationState::Registered
                               : RegistrationState::Unregistered;
     m_authenticated = m_client.cookieJar()->hasLoginSession();
+    m_userAuthAttempted = false;
     m_pendingResolves.clear();
     emit sessionInvalidated();
 }
@@ -308,8 +480,16 @@ void KuGouApi::trackMetadata(Track track, std::function<void(Track, QString)> ca
 void KuGouApi::resolveSong(const QString &hash, const QString &albumAudioId,
                            std::function<void(QUrl, QString)> callback, const QString &quality)
 {
-    const auto requestedQuality =
-        quality == "320" || quality == "flac" ? quality : QStringLiteral("128");
+    static const QStringList supportedQualities{
+        QStringLiteral("128"),         QStringLiteral("320"),
+        QStringLiteral("flac"),        QStringLiteral("high"),
+        QStringLiteral("piano"),       QStringLiteral("acappella"),
+        QStringLiteral("subwoofer"),   QStringLiteral("ancient"),
+        QStringLiteral("surnay"),      QStringLiteral("dj"),
+        QStringLiteral("viper_atmos"), QStringLiteral("viper_clear"),
+        QStringLiteral("viper_tape"),  QStringLiteral("super")};
+    const auto requestedQuality = supportedQualities.contains(quality) ? quality
+                                                                        : QStringLiteral("128");
     if (m_registrationState != RegistrationState::Registered)
     {
         m_pendingResolves.push_back({hash, albumAudioId, std::move(callback), requestedQuality});
@@ -347,41 +527,99 @@ void KuGouApi::resolveSongAfterRegistration(const QString &hash, const QString &
                                             std::function<void(QUrl, QString)> callback,
                                             const QString &quality)
 {
-    // The deployed API version does not expose /user/verify. The documented
-    // /song/url endpoint consumes the already-restored login cookies directly.
-    // Do not probe or refresh login state here: playback must never cause a
-    // repeated login request.
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("hash"), hash);
-    query.addQueryItem(QStringLiteral("quality"), quality);
-    if (!albumAudioId.isEmpty())
+    auto completion =
+        std::make_shared<std::function<void(QUrl, QString)>>(std::move(callback));
+    auto lastError = std::make_shared<QString>();
+    auto query = [hash, albumAudioId, quality]
     {
-        query.addQueryItem(QStringLiteral("album_audio_id"), albumAudioId);
+        QUrlQuery result;
+        result.addQueryItem(QStringLiteral("hash"), hash);
+        result.addQueryItem(QStringLiteral("quality"), quality);
+        if (!albumAudioId.isEmpty())
+            result.addQueryItem(QStringLiteral("album_audio_id"), albumAudioId);
+        return result;
+    };
+
+    auto requestLegacy = std::make_shared<std::function<void()>>();
+    *requestLegacy = [this, query, quality, completion, lastError]
+    {
+        m_client.get(QStringLiteral("/song/url"), query(),
+                     [quality, completion, lastError](ApiClient::Response response)
+                     {
+                         const auto error = endpointError(response);
+                         if (error.code.isEmpty())
+                             if (const QUrl url = mediaUrl(response, quality); !url.isEmpty())
+                             {
+                                 (*completion)(url, {});
+                                 return;
+                             }
+                         if (!error.message.isEmpty())
+                             *lastError = error.message;
+                         (*completion)({}, lastError->isEmpty()
+                                               ? QStringLiteral("服务未返回可播放的音频地址")
+                                               : *lastError);
+                     });
+    };
+
+    auto requestNew = std::make_shared<std::function<void()>>();
+    *requestNew = [this, query, quality, completion, lastError, requestLegacy]
+    {
+        m_client.get(QStringLiteral("/song/url/new"), query(),
+                     [quality, completion, lastError,
+                      requestLegacy](ApiClient::Response response)
+                     {
+                         const auto error = endpointError(response);
+                         if (error.code.isEmpty())
+                             if (const QUrl url = mediaUrl(response, quality); !url.isEmpty())
+                             {
+                                 (*completion)(url, {});
+                                 return;
+                             }
+                         if (!error.message.isEmpty())
+                             *lastError = error.message;
+                         (*requestLegacy)();
+                     });
+    };
+
+    auto requestAuthorized = std::make_shared<std::function<void()>>();
+    *requestAuthorized = [this, query, quality, completion, lastError, requestNew]
+    {
+        m_client.get(QStringLiteral("/song/url/auth/merge"), query(),
+                     [quality, completion, lastError,
+                      requestNew](ApiClient::Response response)
+                     {
+                         const auto error = endpointError(response);
+                         if (error.code.isEmpty())
+                             if (const QUrl url = mediaUrl(response, quality); !url.isEmpty())
+                             {
+                                 (*completion)(url, {});
+                                 return;
+                             }
+                         if (!error.message.isEmpty())
+                             *lastError = error.message;
+                         (*requestNew)();
+                     });
+    };
+
+    if (!authenticated())
+    {
+        (*requestNew)();
+        return;
     }
-    m_client.get(
-        QStringLiteral("/song/url"), query,
-        [callback = std::move(callback)](ApiClient::Response response) mutable
-        {
-            if (const auto error = endpointError(response); !error.code.isEmpty())
-            {
-                callback({}, error.message);
-                return;
-            }
-            const auto root = response.json.object();
-            const auto data = root.value(QStringLiteral("data"));
-            const QString value = findMediaUrl(data.isUndefined() ? QJsonValue(root) : data);
-            const QUrl media(value);
-            if (!media.isValid() || media.host().isEmpty() || !media.userInfo().isEmpty() ||
-                (media.scheme() != QStringLiteral("https") &&
-                 media.scheme() != QStringLiteral("http")))
-            {
-                callback({},
-                         QStringLiteral(
-                             "服务没有返回播放地址；设备注册可能无效，或歌曲需要登录/会员权限"));
-                return;
-            }
-            callback(media, {});
-        });
+    if (m_userAuthAttempted)
+    {
+        (*requestAuthorized)();
+        return;
+    }
+    m_userAuthAttempted = true;
+    m_client.get(QStringLiteral("/user/verify"), {},
+                 [requestAuthorized, requestNew](ApiClient::Response response)
+                 {
+                     if (endpointError(response).code.isEmpty())
+                         (*requestAuthorized)();
+                     else
+                         (*requestNew)();
+                 });
 }
 
 void KuGouApi::searchEntries(const QString &keywords, const QString &kind,
@@ -454,6 +692,231 @@ void KuGouApi::searchEntries(const QString &keywords, const QString &kind,
             }
             callback(entries, {}, {});
         });
+}
+void KuGouApi::hotSearches(std::function<void(QStringList, QString)> callback)
+{
+    m_client.get(QStringLiteral("/search/hot"), {},
+                 [callback = std::move(callback)](ApiClient::Response response) mutable
+                 {
+                     if (const auto error = endpointError(response, true); !error.code.isEmpty())
+                     {
+                         callback({}, error.message);
+                         return;
+                     }
+                     QStringList keywords;
+                     collectKeywords(response.json.object(), keywords);
+                     callback(keywords, keywords.isEmpty() ? QStringLiteral("热搜响应缺少关键词")
+                                                          : QString{});
+                 });
+}
+void KuGouApi::searchSuggestions(const QString &keywords,
+                                 std::function<void(QStringList, QString)> callback)
+{
+    if (keywords.trimmed().isEmpty())
+    {
+        callback({}, {});
+        return;
+    }
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("keywords"), keywords.trimmed());
+    query.addQueryItem(QStringLiteral("albumTipCount"), QStringLiteral("5"));
+    query.addQueryItem(QStringLiteral("correctTipCount"), QStringLiteral("5"));
+    query.addQueryItem(QStringLiteral("mvTipCount"), QStringLiteral("3"));
+    query.addQueryItem(QStringLiteral("musicTipCount"), QStringLiteral("8"));
+    m_client.get(QStringLiteral("/search/suggest"), query,
+                 [callback = std::move(callback)](ApiClient::Response response) mutable
+                 {
+                     if (const auto error = endpointError(response, true); !error.code.isEmpty())
+                     {
+                         callback({}, error.message);
+                         return;
+                     }
+                     QStringList suggestions;
+                     collectKeywords(response.json.object(), suggestions);
+                     callback(suggestions, {});
+                 });
+}
+void KuGouApi::dailyRecommendations(SearchCallback callback)
+{
+    m_client.get(QStringLiteral("/everyday/recommend"), {},
+                 [callback = std::move(callback)](ApiClient::Response response) mutable
+                 {
+                     if (const auto error = endpointError(response); !error.code.isEmpty())
+                     {
+                         callback({}, error.code, error.message);
+                         return;
+                     }
+                     callback(parseTracks(response.json.object()), {}, {});
+                 });
+}
+void KuGouApi::rankEntries(std::function<void(QVariantList, QString)> callback)
+{
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("withsong"), QStringLiteral("0"));
+    m_client.get(QStringLiteral("/rank/list"), query,
+                 [callback = std::move(callback)](ApiClient::Response response) mutable
+                 {
+                     if (const auto error = endpointError(response); !error.code.isEmpty())
+                     {
+                         callback({}, error.message);
+                         return;
+                     }
+                     const auto rows = findFirstArray(
+                         response.json.object(), {"rank_list", "ranklist", "list", "info"});
+                     QVariantList entries;
+                     for (const auto &value : rows)
+                     {
+                         const auto row = value.toObject();
+                         const QString id = stringField(row, {"rankid", "rank_id", "id"});
+                         const QString title =
+                             stringField(row, {"rankname", "rank_name", "name", "title"});
+                         if (id.isEmpty() || title.isEmpty())
+                             continue;
+                         entries.append(QVariantMap{
+                             {"kind", "rank"},
+                             {"id", id},
+                             {"title", title},
+                             {"name", title},
+                             {"subtitle", stringField(row, {"update_frequency", "intro", "desc"})},
+                             {"coverUrl", normalizedCover(stringField(
+                                              row, {"imgurl", "image", "cover", "banner7url",
+                                                    "share_logo"}))}});
+                     }
+                     callback(entries, entries.isEmpty() ? QStringLiteral("排行榜响应缺少列表")
+                                                        : QString{});
+                 });
+}
+void KuGouApi::rankTracks(const QString &rankId, SearchCallback callback, int page)
+{
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("rankid"), rankId);
+    query.addQueryItem(QStringLiteral("page"), QString::number(page));
+    query.addQueryItem(QStringLiteral("pagesize"), QStringLiteral("30"));
+    m_client.get(QStringLiteral("/rank/audio"), query,
+                 [callback = std::move(callback)](ApiClient::Response response) mutable
+                 {
+                     if (const auto error = endpointError(response); !error.code.isEmpty())
+                     {
+                         callback({}, error.code, error.message);
+                         return;
+                     }
+                     callback(parseTracks(response.json.object()), {}, {});
+                 });
+}
+void KuGouApi::popularPlaylists(std::function<void(QVariantList, QString)> callback, int page)
+{
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("category_id"), QStringLiteral("0"));
+    query.addQueryItem(QStringLiteral("withsong"), QStringLiteral("0"));
+    query.addQueryItem(QStringLiteral("withtag"), QStringLiteral("0"));
+    query.addQueryItem(QStringLiteral("page"), QString::number(page));
+    query.addQueryItem(QStringLiteral("pagesize"), QStringLiteral("30"));
+    m_client.get(QStringLiteral("/top/playlist"), query,
+                 [callback = std::move(callback)](ApiClient::Response response) mutable
+                 {
+                     if (const auto error = endpointError(response); !error.code.isEmpty())
+                     {
+                         callback({}, error.message);
+                         return;
+                     }
+                     const auto rows = findFirstArray(response.json.object(),
+                                                      {"special_list", "playlists", "lists",
+                                                       "items", "info", "list"});
+                     QVariantList entries;
+                     for (const auto &value : rows)
+                         if (const auto entry = playlistEntry(value.toObject()); !entry.isEmpty())
+                             entries.append(entry);
+                     callback(entries, entries.isEmpty() ? QStringLiteral("热门歌单响应缺少列表")
+                                                        : QString{});
+                 });
+}
+void KuGouApi::comments(const QString &kind, const QString &id,
+                        std::function<void(QVariantList, QString, QString)> callback, int page)
+{
+    const QString path = kind == QStringLiteral("song") ? QStringLiteral("/comment/music")
+                         : kind == QStringLiteral("album") ? QStringLiteral("/comment/album")
+                         : kind == QStringLiteral("playlist") ? QStringLiteral("/comment/playlist")
+                                                               : QString{};
+    if (path.isEmpty() || id.trimmed().isEmpty() || page < 1)
+    {
+        callback({}, QStringLiteral("InvalidArgument"), QStringLiteral("评论目标无效"));
+        return;
+    }
+    QUrlQuery query;
+    query.addQueryItem(kind == QStringLiteral("song") ? QStringLiteral("mixsongid")
+                                                       : QStringLiteral("id"), id);
+    query.addQueryItem(QStringLiteral("page"), QString::number(page));
+    query.addQueryItem(QStringLiteral("pagesize"), QStringLiteral("30"));
+    m_client.get(path, query,
+                 [callback = std::move(callback)](ApiClient::Response response) mutable
+                 {
+                     if (const auto error = endpointError(response); !error.code.isEmpty())
+                     {
+                         callback({}, error.code, error.message);
+                         return;
+                     }
+                     if (!response.json.isObject())
+                     {
+                         callback({}, QStringLiteral("SchemaMismatch"),
+                                  QStringLiteral("评论响应不是 JSON 对象"));
+                         return;
+                     }
+                     bool found = false;
+                     const auto rows = commentRows(response.json.object(), &found);
+                     if (!found)
+                     {
+                         callback({}, QStringLiteral("SchemaMismatch"),
+                                  QStringLiteral("评论响应缺少列表"));
+                         return;
+                     }
+                     QVariantList result;
+                     for (const auto &value : rows)
+                         if (const auto item = commentEntry(value.toObject()); !item.isEmpty())
+                             result.append(item);
+                     if (!rows.isEmpty() && result.isEmpty())
+                     {
+                         callback({}, QStringLiteral("SchemaMismatch"),
+                                  QStringLiteral("评论响应缺少内容字段"));
+                         return;
+                     }
+                     callback(result, {}, {});
+                 });
+}
+void KuGouApi::sendComment(const QString &kind, const QString &id, const QString &name,
+                           const QString &content, std::function<void(QString, QString)> callback)
+{
+    const QString path = kind == QStringLiteral("song") ? QStringLiteral("/comment/music/send")
+                         : kind == QStringLiteral("album") ? QStringLiteral("/comment/album/send")
+                         : kind == QStringLiteral("playlist") ? QStringLiteral("/comment/playlist/send")
+                                                               : QString{};
+    const QString message = content.trimmed();
+    if (path.isEmpty() || id.trimmed().isEmpty() || message.isEmpty() || message.size() > 500)
+    {
+        callback(QStringLiteral("InvalidArgument"), QStringLiteral("评论目标或内容无效（最多 500 字）"));
+        return;
+    }
+    if (!authenticated())
+    {
+        callback(QStringLiteral("AuthRequired"), QStringLiteral("登录后才能发表评论"));
+        return;
+    }
+    QJsonObject body{{kind == QStringLiteral("song") ? QStringLiteral("mixsongid")
+                                                     : QStringLiteral("id"), id},
+                     {"content", message}};
+    if (!name.trimmed().isEmpty())
+        body.insert(QStringLiteral("name"), name.trimmed());
+    m_client.postJson(path, {}, QJsonDocument(body),
+                      [callback = std::move(callback)](ApiClient::Response response)
+                      {
+                          const auto error = endpointError(response);
+                          if (error.code.isEmpty() && !response.json.isObject())
+                          {
+                              callback(QStringLiteral("UnknownResult"),
+                                       QStringLiteral("服务已响应但未返回可确认的发布结果"));
+                              return;
+                          }
+                          callback(error.code, error.message);
+                      });
 }
 void KuGouApi::artistDetail(const QString &artistId,
                             std::function<void(QVariantMap, QString)> callback)
@@ -633,9 +1096,26 @@ void KuGouApi::userPlaylists(std::function<void(QList<Playlist>, QString, QStrin
                 const QString listId = stringField(row, {"listid", "list_id", "specialid"});
                 const QString title = stringField(row, {"specialname", "name", "title"});
                 if ((!globalId.isEmpty() || !listId.isEmpty()) && !title.isEmpty())
-                    result.push_back({globalId, listId, title,
-                                      normalizedCover(stringField(row, {"img", "pic", "cover"})),
-                                      stringField(row, {"song_count", "count", "total"}).toInt()});
+                {
+                    Playlist playlist;
+                    playlist.globalCollectionId = globalId;
+                    playlist.listId = listId;
+                    playlist.title = title;
+                    playlist.cover =
+                        normalizedCover(stringField(row, {"img", "pic", "cover"}));
+                    playlist.description = stringField(row, {"intro", "description", "desc"});
+                    playlist.creatorUserId =
+                        stringField(row, {"list_create_userid", "create_userid", "userid"});
+                    playlist.creatorListId =
+                        stringField(row, {"list_create_listid", "source_listid"});
+                    playlist.trackCount =
+                        stringField(row, {"song_count", "count", "total"}).toInt();
+                    playlist.totalVersion =
+                        stringField(row, {"total_ver", "total_version"}).toLongLong();
+                    playlist.type = stringField(row, {"type", "list_type"}).toInt();
+                    playlist.sort = stringField(row, {"sort", "sort_index"}).toInt();
+                    result.push_back(std::move(playlist));
+                }
             }
             if (result.size() != rows.size())
             {
@@ -694,6 +1174,44 @@ void KuGouApi::playlistTracks(const QString &globalCollectionId, const QString &
                           QJsonDocument(QJsonObject{}), std::move(handleResponse));
     else
         m_client.get(QStringLiteral("/playlist/track/all"), query, std::move(handleResponse));
+}
+
+void KuGouApi::playlistDetail(const QString &globalCollectionId,
+                              std::function<void(QVariantMap, QString)> callback)
+{
+    if (globalCollectionId.isEmpty())
+    {
+        callback({}, QStringLiteral("歌单缺少 global_collection_id"));
+        return;
+    }
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("ids"), globalCollectionId);
+    m_client.get(QStringLiteral("/playlist/detail"), query,
+                 [globalCollectionId, callback = std::move(callback)](
+                     ApiClient::Response response) mutable
+                 {
+                     if (const auto error = endpointError(response); !error.code.isEmpty())
+                     {
+                         callback({}, error.message);
+                         return;
+                     }
+                     const QJsonObject root = response.json.object();
+                     auto rows = findFirstArray(root, {"info", "lists", "items", "data"});
+                     QJsonObject row;
+                     if (!rows.isEmpty())
+                         row = rows.first().toObject();
+                     else if (root.value(QStringLiteral("data")).isObject())
+                         row = root.value(QStringLiteral("data")).toObject();
+                     auto detail = playlistEntry(row);
+                     if (detail.isEmpty())
+                     {
+                         callback({}, QStringLiteral("歌单详情响应缺少有效 ID 或标题"));
+                         return;
+                     }
+                     detail.insert(QStringLiteral("id"), globalCollectionId);
+                     detail.insert(QStringLiteral("globalId"), globalCollectionId);
+                     callback(detail, {});
+                 });
 }
 
 void KuGouApi::createLoginQr(std::function<void(QString, QString, QString)> callback)
@@ -805,10 +1323,63 @@ void KuGouApi::createPlaylist(const QString &name, WriteCallback callback)
                           callback(error.code, error.message);
                       });
 }
+void KuGouApi::favoritePlaylist(const QVariantMap &playlist, WriteCallback callback)
+{
+    if (!authenticated())
+    {
+        callback(QStringLiteral("AuthRequired"), QStringLiteral("登录后才能收藏歌单"));
+        return;
+    }
+    const QString name = playlist.value(QStringLiteral("title")).toString().trimmed();
+    const QString creatorUserId =
+        playlist.value(QStringLiteral("creatorUserId")).toString();
+    const QString creatorListId =
+        playlist.value(QStringLiteral("creatorListId")).toString();
+    if (name.isEmpty() || creatorUserId.isEmpty() || creatorListId.isEmpty())
+    {
+        callback(QStringLiteral("SchemaMismatch"),
+                 QStringLiteral("歌单详情缺少收藏所需的创建者信息"));
+        return;
+    }
+    const QJsonObject body{{"name", name},
+                           {"type", 1},
+                           {"source", 1},
+                           {"list_create_userid", creatorUserId},
+                           {"list_create_listid", creatorListId},
+                           {"list_create_gid",
+                            playlist.value(QStringLiteral("creatorGid")).toString()}};
+    m_client.postJson(QStringLiteral("/playlist/add"), {}, QJsonDocument(body),
+                      [callback = std::move(callback)](ApiClient::Response response)
+                      {
+                          const auto error = endpointError(response);
+                          callback(error.code, error.message);
+                      });
+}
 void KuGouApi::deletePlaylist(const QString &listId, WriteCallback callback)
 {
     m_client.postJson(QStringLiteral("/playlist/del"), {},
                       QJsonDocument(QJsonObject{{"listid", listId}}),
+                      [callback = std::move(callback)](ApiClient::Response response)
+                      {
+                          const auto error = endpointError(response);
+                          callback(error.code, error.message);
+                      });
+}
+void KuGouApi::updatePlaylist(const QString &listId, qint64 totalVersion, int type,
+                              const QString &name, const QString &description,
+                              WriteCallback callback)
+{
+    if (listId.isEmpty() || name.trimmed().isEmpty())
+    {
+        callback(QStringLiteral("InvalidArgument"), QStringLiteral("歌单名称不能为空"));
+        return;
+    }
+    const QJsonObject body{{"listid", listId},
+                           {"total_ver", totalVersion},
+                           {"type", type},
+                           {"name", name.trimmed()},
+                           {"intro", description.trimmed()}};
+    m_client.postJson(QStringLiteral("/playlist/update"), {}, QJsonDocument(body),
                       [callback = std::move(callback)](ApiClient::Response response)
                       {
                           const auto error = endpointError(response);
@@ -913,6 +1484,7 @@ bool KuGouApi::beginAuthenticatedSession()
     // A pre-login registration result must never suppress registration for the new account session.
     m_registrationState = RegistrationState::Unregistered;
     m_authenticated = m_client.cookieJar()->hasLoginSession();
+    m_userAuthAttempted = false;
     m_client.invalidateSession();
     m_pendingResolves.clear();
     emit sessionInvalidated();
@@ -939,6 +1511,8 @@ bool KuGouApi::restoreAuthenticatedSession()
 {
     const auto *jar = m_client.cookieJar();
     m_authenticated = jar && jar->hasLoginSession();
+    if (!m_authenticated)
+        m_userAuthAttempted = false;
     return m_authenticated;
 }
 
@@ -949,6 +1523,7 @@ void KuGouApi::logout()
     if (auto *jar = m_client.cookieJar())
         jar->clearStoredCookies();
     m_authenticated = false;
+    m_userAuthAttempted = false;
     m_registrationState = RegistrationState::Unregistered;
     m_pendingResolves.clear();
     emit sessionInvalidated();

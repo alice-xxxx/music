@@ -11,6 +11,7 @@ Page {
     required property var player
     signal closeRequested
     signal addToPlaylistRequested(var track)
+    signal commentsRequested(string kind, string id, string title)
     property bool descriptionExpanded: false
 
     function navigateBack() {
@@ -33,8 +34,9 @@ Page {
                 onClicked: root.navigateBack()
             }
             Label {
-                text: root.collection.kind === "artist" ? "歌手" : root.collection.kind === "playlist" ?
-                                                      "歌单" : "专辑"
+                text: root.collection.kind === "artist" ? "歌手" :
+                      root.collection.kind === "playlist" ? "歌单" :
+                      root.collection.kind === "rank" ? "排行榜" : "专辑"
                 font.bold: true
                 Layout.fillWidth: true
             }
@@ -90,12 +92,35 @@ Page {
                     }
                     Button {
                         text: root.collection.kind === "artist" ? "播放热门歌曲" :
+                              root.collection.kind === "rank" ? "播放榜单" :
                               root.collection.kind === "playlist" ? "播放全部" : "播放专辑"
                         highlighted: true
                         enabled: root.collection.tracks.length > 0
                         Layout.alignment: root.width < 720 ? Qt.AlignHCenter : Qt.AlignLeft
                         onClicked: root.player.playCollection(root.collection.tracks, 0,
                                                               root.collection.source)
+                    }
+                    Button {
+                        visible: root.collection.kind === "playlist"
+                        text: root.collection.favoriteBusy ? "处理中…" :
+                              root.collection.favorited ?
+                              (root.collection.canUnfavorite ? "取消收藏" : "已在音乐库") : "收藏歌单"
+                        enabled: !root.collection.favoriteBusy &&
+                                 (!root.collection.favorited || root.collection.canUnfavorite)
+                        Layout.alignment: root.width < 720 ? Qt.AlignHCenter : Qt.AlignLeft
+                        onClicked: root.collection.toggleFavorite()
+                    }
+                    Button {
+                        visible: root.collection.kind === "album" ||
+                                 root.collection.kind === "playlist"
+                        text: "评论"
+                        onClicked: {
+                            const source = root.collection.source;
+                            root.commentsRequested(root.collection.kind,
+                                                   root.collection.kind === "playlist" ?
+                                                       source.globalId : source.id,
+                                                   root.collection.title);
+                        }
                     }
                 }
             }
@@ -112,6 +137,13 @@ Page {
                 visible: root.collection.description.length > 100
                 text: root.descriptionExpanded ? "收起简介" : "展开简介"
                 onClicked: root.descriptionExpanded = !root.descriptionExpanded
+            }
+            Label {
+                text: root.collection.favoriteMessage
+                visible: text.length > 0
+                color: Theme.textSecondary
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
             }
             Label {
                 text: root.collection.errorMessage

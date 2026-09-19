@@ -12,6 +12,7 @@ Page {
     required property var player
     signal closeRequested
     signal queueRequested
+    signal commentsRequested(var track)
     signal albumRequested(var track)
     signal artistRequested(var artist)
     property bool showLyrics: false
@@ -237,6 +238,11 @@ Page {
                     busy: root.favorites.busy
                     enabled: !root.favorites.busy && root.player.hasCurrentTrack
                     onClicked: root.favorites.toggle()
+                }
+                Button {
+                    text: "评论"
+                    enabled: !!root.player.currentTrack.albumAudioId
+                    onClicked: root.commentsRequested(root.player.currentTrack)
                 }
                 IconButton {
                     symbol: "shuffle"

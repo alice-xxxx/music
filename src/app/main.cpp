@@ -1,6 +1,8 @@
 #include "api/KuGouApi.h"
 #include "features/catalog/CatalogService.h"
 #include "features/catalog/CollectionViewModel.h"
+#include "features/catalog/CommentsViewModel.h"
+#include "features/catalog/DiscoverViewModel.h"
 #include "features/account/SessionManager.h"
 #include "features/library/LibraryViewModel.h"
 #include "features/library/FavoritesController.h"
@@ -113,6 +115,8 @@ int main(int argc, char *argv[])
                      { playbackController.setRequestedQuality(appSettings.effectiveQuality()); });
     LibraryViewModel libraryViewModel(&kugouApi, &catalog);
     CollectionViewModel collection(&kugouApi, &catalog);
+    CommentsViewModel comments(&kugouApi);
+    DiscoverViewModel discover(&kugouApi, &catalog);
     FavoritesController favorites(&kugouApi, &sessionManager);
     QObject::connect(&favorites, &FavoritesController::resumeTrackRequested, &playbackController,
                      [&](const QVariantMap &track)
@@ -131,8 +135,10 @@ int main(int argc, char *argv[])
     engine.setNetworkAccessManagerFactory(&artworkNetwork);
     engine.setInitialProperties(
         {{QStringLiteral("collectionViewModel"), QVariant::fromValue(&collection)},
+         {QStringLiteral("commentsViewModel"), QVariant::fromValue(&comments)},
          {QStringLiteral("favorites"), QVariant::fromValue(&favorites)},
          {QStringLiteral("searchViewModel"), QVariant::fromValue(&searchViewModel)},
+          {QStringLiteral("discoverViewModel"), QVariant::fromValue(&discover)},
          {QStringLiteral("playbackController"), QVariant::fromValue(&playbackController)},
          {QStringLiteral("sessionManager"), QVariant::fromValue(&sessionManager)},
          {QStringLiteral("appSettings"), QVariant::fromValue(&appSettings)},

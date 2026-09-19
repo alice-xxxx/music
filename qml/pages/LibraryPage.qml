@@ -53,6 +53,9 @@ Page {
             if (root.libraryViewModel.actionSucceeded &&
                     root.libraryViewModel.actionKind === "delete")
                 deleteDialog.close();
+            if (root.libraryViewModel.actionSucceeded &&
+                    root.libraryViewModel.actionKind === "update")
+                editDialog.close();
         }
     }
 
@@ -157,6 +160,12 @@ Page {
                     onClicked: detailMenu.open()
                     Menu {
                         id: detailMenu
+                        MenuItem {
+                            text: "编辑歌单"
+                            enabled: !root.libraryViewModel.actionBusy &&
+                                     !root.libraryViewModel.actionUncertain
+                            onTriggered: editDialog.open()
+                        }
                         MenuItem {
                             text: "删除歌单"
                             enabled: !root.libraryViewModel.actionBusy &&
@@ -398,6 +407,54 @@ Page {
                          !root.libraryViewModel.actionBusy &&
                          !root.libraryViewModel.actionUncertain
                 onClicked: root.libraryViewModel.createPlaylist(playlistName.text)
+            }
+        }
+    }
+    Dialog {
+        id: editDialog
+        title: "编辑歌单"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(440, root.width - 32)
+        standardButtons: Dialog.Cancel
+        onOpened: {
+            editPlaylistName.text = root.libraryViewModel.title;
+            editPlaylistDescription.text = root.libraryViewModel.description;
+            editPlaylistName.forceActiveFocus();
+        }
+        contentItem: ColumnLayout {
+            Label { text: "歌单名称" }
+            TextField {
+                id: editPlaylistName
+                maximumLength: 100
+                Layout.fillWidth: true
+            }
+            Label { text: "简介" }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 120
+                TextArea {
+                    id: editPlaylistDescription
+                    onTextChanged: if (text.length > 500) text = text.slice(0, 500)
+                    wrapMode: TextEdit.Wrap
+                    placeholderText: "填写歌单简介（可选）"
+                }
+            }
+            Label {
+                text: root.libraryViewModel.actionMessage
+                visible: text.length > 0 && !root.libraryViewModel.actionSucceeded
+                wrapMode: Text.Wrap
+                color: Theme.error
+                Layout.fillWidth: true
+            }
+            Button {
+                text: root.libraryViewModel.actionBusy ? "正在保存…" : "保存"
+                highlighted: true
+                enabled: editPlaylistName.text.trim().length > 0 &&
+                         !root.libraryViewModel.actionBusy &&
+                         !root.libraryViewModel.actionUncertain
+                onClicked: root.libraryViewModel.updateSelectedPlaylist(
+                               editPlaylistName.text, editPlaylistDescription.text)
             }
         }
     }

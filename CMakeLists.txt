@@ -29,6 +29,8 @@ qt_add_executable(MusicApp
     src/features/account/SessionManager.cpp src/features/account/SessionManager.h
     src/features/catalog/CatalogService.cpp src/features/catalog/CatalogService.h
     src/features/catalog/CollectionViewModel.cpp src/features/catalog/CollectionViewModel.h
+    src/features/catalog/CommentsViewModel.cpp src/features/catalog/CommentsViewModel.h
+    src/features/catalog/DiscoverViewModel.cpp src/features/catalog/DiscoverViewModel.h
     src/features/library/FavoritesController.cpp src/features/library/FavoritesController.h
     src/features/library/LibraryViewModel.cpp src/features/library/LibraryViewModel.h
     src/features/playback/AudioEngine.cpp src/features/playback/AudioEngine.h
@@ -65,6 +67,7 @@ if(WIN32)
     if(music_app_cppwinrt_paths)
         list(GET music_app_cppwinrt_paths 0 music_app_cppwinrt_path)
         target_sources(MusicApp PRIVATE src/platform/BackgroundPlayback_windows.cpp)
+        target_compile_definitions(MusicApp PRIVATE MUSIC_APP_HAS_WINRT)
         target_include_directories(MusicApp PRIVATE
             "$<$<COMPILE_LANGUAGE:CXX>:${music_app_cppwinrt_path}>")
         target_link_libraries(MusicApp PRIVATE runtimeobject ole32)
@@ -90,6 +93,8 @@ qt_add_qml_module(MusicApp
         qml/components/QueueDrawer.qml
         qml/pages/PlaylistPicker.qml
         qml/pages/CollectionPage.qml
+        qml/pages/CommentsDialog.qml
+        qml/pages/DiscoverPage.qml
         qml/pages/LibraryPage.qml
         qml/pages/SearchPage.qml
         qml/theme/Theme.qml

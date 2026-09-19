@@ -13,6 +13,9 @@ class SearchViewModel final : public QAbstractListModel
     Q_PROPERTY(QString pageError READ pageError NOTIFY statusChanged)
     Q_PROPERTY(QString resultsQuery READ resultsQuery NOTIFY statusChanged)
     Q_PROPERTY(QStringList recentQueries READ recentQueries NOTIFY statusChanged)
+    Q_PROPERTY(QStringList hotKeywords READ hotKeywords NOTIFY suggestionsChanged)
+    Q_PROPERTY(QStringList suggestions READ suggestions NOTIFY suggestionsChanged)
+    Q_PROPERTY(bool suggestionsLoading READ suggestionsLoading NOTIFY suggestionsChanged)
     Q_PROPERTY(QString query READ query WRITE setQuery NOTIFY queryChanged)
     Q_PROPERTY(Status status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY statusChanged)
@@ -90,8 +93,13 @@ class SearchViewModel final : public QAbstractListModel
     {
         return m_recentQueries;
     }
+    QStringList hotKeywords() const { return m_hotKeywords; }
+    QStringList suggestions() const { return m_suggestions; }
+    bool suggestionsLoading() const { return m_suggestionsLoading; }
     Q_INVOKABLE void loadMore();
     Q_INVOKABLE void submitSearch();
+    Q_INVOKABLE void requestSuggestions();
+    Q_INVOKABLE void loadHotSearches();
     Q_INVOKABLE void retry();
     Q_INVOKABLE void clearRecentQueries();
 
@@ -100,6 +108,7 @@ class SearchViewModel final : public QAbstractListModel
     void categoryChanged();
     void entriesAboutToChange(bool append);
     void statusChanged();
+    void suggestionsChanged();
 
   private:
     void requestPage(bool more);
@@ -114,6 +123,11 @@ class SearchViewModel final : public QAbstractListModel
     QString m_pageError;
     QString m_resultsQuery;
     QStringList m_recentQueries;
+    QStringList m_hotKeywords;
+    QStringList m_suggestions;
+    bool m_suggestionsLoading = false;
+    quint64 m_suggestionGeneration = 0;
+    quint64 m_hotGeneration = 0;
     void setStatus(Status status, QString message = {}, QString diagnosticId = {});
     QString m_query;
     QList<Track> m_tracks;

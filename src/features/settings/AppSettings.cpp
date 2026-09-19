@@ -13,8 +13,18 @@ AppSettings::AppSettings(QObject *parent) : QObject(parent)
 {
     QSettings settings;
     const auto quality = settings.value(QStringLiteral("playback/quality"), "128").toString();
-    if (quality == "128" || quality == "320" || quality == "flac")
+    const QStringList qualities = {"128", "320", "flac", "high", "piano", "acappella",
+                                   "subwoofer", "ancient", "surnay", "dj", "viper_atmos",
+                                   "viper_clear", "viper_tape", "super"};
+    if (qualities.contains(quality))
         m_preferredQuality = quality;
+    if (!settings.contains(QStringLiteral("navigation/version")))
+    {
+        if (settings.contains(QStringLiteral("navigation/page")))
+            settings.setValue(QStringLiteral("navigation/page"),
+                              qBound(0, settings.value(QStringLiteral("navigation/page")).toInt() + 1, 2));
+        settings.setValue(QStringLiteral("navigation/version"), 2);
+    }
     m_dataSaver = settings.value(QStringLiteral("playback/dataSaver"), false).toBool();
     m_themeMode =
         settings.value(QStringLiteral("appearance/theme"), QStringLiteral("system")).toString();
@@ -40,8 +50,10 @@ QString AppSettings::themeMode() const
 }
 void AppSettings::setPreferredQuality(const QString &quality)
 {
-    if ((quality != "128" && quality != "320" && quality != "flac") ||
-        quality == m_preferredQuality)
+    const QStringList qualities = {"128", "320", "flac", "high", "piano", "acappella",
+                                   "subwoofer", "ancient", "surnay", "dj", "viper_atmos",
+                                   "viper_clear", "viper_tape", "super"};
+    if (!qualities.contains(quality) || quality == m_preferredQuality)
         return;
     m_preferredQuality = quality;
     QSettings().setValue(QStringLiteral("playback/quality"), quality);
@@ -132,11 +144,11 @@ void AppSettings::clearArtworkCache()
 }
 int AppSettings::lastPage() const
 {
-    return qBound(0, QSettings().value("navigation/page", 0).toInt(), 1);
+    return qBound(0, QSettings().value("navigation/page", 0).toInt(), 2);
 }
 void AppSettings::setLastPage(int page)
 {
-    page = qBound(0, page, 1);
+    page = qBound(0, page, 2);
     if (page == lastPage())
         return;
     QSettings().setValue("navigation/page", page);

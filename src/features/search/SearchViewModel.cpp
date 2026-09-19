@@ -21,6 +21,7 @@ SearchViewModel::SearchViewModel(KuGouApi *api, CatalogService *catalog, QObject
                     }
             });
     connect(m_api, &KuGouApi::sessionInvalidated, this, &SearchViewModel::invalidateSession);
+    loadHotSearches();
 }
 int SearchViewModel::rowCount(const QModelIndex &parent) const
 {
@@ -71,6 +72,10 @@ void SearchViewModel::setQuery(const QString &query)
     m_loadingMore = false;
     m_query = query;
     emit queryChanged();
+    ++m_suggestionGeneration;
+    m_suggestionsLoading = false;
+    m_suggestions.clear();
+    emit suggestionsChanged();
 }
 void SearchViewModel::setCategory(const QString &category)
 {
@@ -95,7 +100,49 @@ QString SearchViewModel::diagnosticId() const
 }
 void SearchViewModel::submitSearch()
 {
+    ++m_suggestionGeneration;
+    m_suggestionsLoading = false;
+    emit suggestionsChanged();
     requestPage(false);
+}
+void SearchViewModel::requestSuggestions()
+{
+    const QString normalized = m_query.trimmed();
+    const quint64 generation = ++m_suggestionGeneration;
+    if (normalized.isEmpty())
+    {
+        m_suggestionsLoading = false;
+        m_suggestions.clear();
+        emit suggestionsChanged();
+        return;
+    }
+    m_suggestionsLoading = true;
+    emit suggestionsChanged();
+    m_api->searchSuggestions(
+        normalized,
+        [this, guard = QPointer<SearchViewModel>(this), generation,
+         normalized](QStringList suggestions, QString)
+        {
+            if (!guard || generation != m_suggestionGeneration ||
+                normalized != m_query.trimmed())
+                return;
+            m_suggestionsLoading = false;
+            m_suggestions = std::move(suggestions);
+            emit suggestionsChanged();
+        });
+}
+void SearchViewModel::loadHotSearches()
+{
+    const quint64 generation = ++m_hotGeneration;
+    m_api->hotSearches(
+        [this, guard = QPointer<SearchViewModel>(this), generation](QStringList keywords,
+                                                                   QString)
+        {
+            if (!guard || generation != m_hotGeneration)
+                return;
+            m_hotKeywords = std::move(keywords);
+            emit suggestionsChanged();
+        });
 }
 void SearchViewModel::loadMore()
 {
@@ -261,6 +308,9 @@ void SearchViewModel::invalidateSession()
 {
     m_entries.clear();
     ++m_generation;
+    ++m_suggestionGeneration;
+    m_suggestions.clear();
+    m_suggestionsLoading = false;
     m_loadingMore = false;
     m_hasMore = false;
     m_page = 0;
@@ -269,6 +319,8 @@ void SearchViewModel::invalidateSession()
     m_tracks.clear();
     endResetModel();
     setStatus(Idle);
+    emit suggestionsChanged();
+    loadHotSearches();
 }
 void SearchViewModel::setStatus(Status status, QString message, QString diagnosticId)
 {

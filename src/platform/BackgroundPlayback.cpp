@@ -25,6 +25,8 @@ QString normalizedArtworkUrl(QString url)
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#endif
+#ifdef MUSIC_APP_HAS_WINRT
 void *createWindowsMediaIntegration(BackgroundPlayback *owner);
 void destroyWindowsMediaIntegration(void *state);
 bool windowsMediaIntegrationHandlesCommands(void *state);
@@ -152,8 +154,11 @@ BackgroundPlayback::BackgroundPlayback(QObject *parent) : QObject(parent)
     cache->setMaximumCacheSize(64 * 1024 * 1024);
     m_artworkNetwork->setCache(cache);
 #endif
+
 #ifdef Q_OS_WIN
+#ifdef MUSIC_APP_HAS_WINRT
     m_platformState = createWindowsMediaIntegration(this);
+#endif
     QCoreApplication::instance()->installNativeEventFilter(this);
 #elif defined(Q_OS_ANDROID)
     QMutexLocker locker(&androidOwnerMutex);
@@ -169,7 +174,9 @@ BackgroundPlayback::~BackgroundPlayback()
 {
 #ifdef Q_OS_WIN
     QCoreApplication::instance()->removeNativeEventFilter(this);
+#ifdef MUSIC_APP_HAS_WINRT
     destroyWindowsMediaIntegration(m_platformState);
+#endif
 #elif defined(Q_OS_ANDROID)
     {
         QMutexLocker locker(&androidOwnerMutex);
@@ -197,8 +204,10 @@ bool BackgroundPlayback::nativeEventFilter(const QByteArray &eventType, void *me
     const auto *native = static_cast<MSG *>(message);
     if (native->message != WM_APPCOMMAND)
         return false;
+#ifdef MUSIC_APP_HAS_WINRT
     if (windowsMediaIntegrationHandlesCommands(m_platformState))
         return false;
+#endif
     switch (GET_APPCOMMAND_LPARAM(native->lParam))
     {
     case APPCOMMAND_MEDIA_PLAY_PAUSE:
@@ -247,8 +256,18 @@ void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing
     }
 
 #ifdef Q_OS_WIN
+#ifdef MUSIC_APP_HAS_WINRT
     updateWindowsMediaIntegration(m_platformState, hasTrack, playing, position, duration, title,
                                   artist);
+#else
+    Q_UNUSED(hasTrack);
+    Q_UNUSED(desiredPlaying);
+    Q_UNUSED(playing);
+    Q_UNUSED(position);
+    Q_UNUSED(duration);
+    Q_UNUSED(title);
+    Q_UNUSED(artist);
+#endif
 #elif defined(Q_OS_ANDROID)
     const QJniObject context = QNativeInterface::QAndroidApplication::context();
     if (context.isValid())

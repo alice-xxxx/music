@@ -184,13 +184,19 @@ Page {
                     }
                     ComboBox {
                         Layout.fillWidth: true
-                        model: ["标准 · 128 kbps", "高品 · 320 kbps", "无损 · FLAC"]
-                        currentIndex: Math.max(0, ["128", "320", "flac"].indexOf(
+                        readonly property var qualityValues: ["128", "320", "flac", "high",
+                                                              "piano", "acappella", "subwoofer",
+                                                              "ancient", "surnay", "dj",
+                                                              "viper_atmos", "viper_clear",
+                                                              "viper_tape", "super"]
+                        model: ["标准 · 128 kbps", "高品 · 320 kbps", "无损 · FLAC",
+                                "高清", "钢琴", "人声", "重低音", "古风", "唢呐", "DJ",
+                                "蝰蛇全景声", "蝰蛇清晰", "蝰蛇磁带", "超清"]
+                        currentIndex: Math.max(0, qualityValues.indexOf(
                                                    root.appSettings.preferredQuality))
 
                         enabled: !root.appSettings.dataSaver
-                        onActivated: root.appSettings.preferredQuality = ["128", "320",
-                                                                          "flac"][currentIndex]
+                        onActivated: root.appSettings.preferredQuality = qualityValues[currentIndex]
                     }
                     Switch {
                         text: "节省流量"
