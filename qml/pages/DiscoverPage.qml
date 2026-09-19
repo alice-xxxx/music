@@ -42,8 +42,15 @@ Page {
                 Button {
                     text: "刷新"
                     enabled: !root.discoverViewModel.loading
-                    onClicked: root.discoverViewModel.load()
+                    onClicked: root.discoverViewModel.load(true)
                 }
+            }
+            Label {
+                visible: root.discoverViewModel.refreshMessage.length > 0
+                text: root.discoverViewModel.refreshMessage
+                color: Theme.textSecondary
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
             }
             Label {
                 visible: root.discoverViewModel.loading && root.discoverViewModel.dailyTracks.length === 0
@@ -61,6 +68,7 @@ Page {
                     required property var modelData
                     Layout.fillWidth: true
                     playbackController: root.playbackController
+                    artworkAlwaysVisible: true
                     trackData: modelData
                     trackKey: modelData.key
                     title: modelData.title

@@ -15,6 +15,7 @@ class DiscoverViewModel final : public QObject
     Q_PROPERTY(QVariantList playlists READ playlists NOTIFY changed)
     Q_PROPERTY(bool loading READ loading NOTIFY changed)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY changed)
+    Q_PROPERTY(QString refreshMessage READ refreshMessage NOTIFY changed)
 
   public:
     explicit DiscoverViewModel(KuGouApi *api, CatalogService *catalog,
@@ -25,8 +26,9 @@ class DiscoverViewModel final : public QObject
     QVariantList playlists() const { return m_playlists; }
     bool loading() const { return m_loading; }
     QString errorMessage() const { return m_errorMessage; }
+    QString refreshMessage() const { return m_refreshMessage; }
 
-    Q_INVOKABLE void load();
+    Q_INVOKABLE void load(bool forceRefresh = false);
 
   signals:
     void changed();
@@ -41,6 +43,7 @@ class DiscoverViewModel final : public QObject
     QVariantList m_playlists;
     QStringList m_errors;
     QString m_errorMessage;
+    QString m_refreshMessage;
     bool m_loading = false;
     int m_pending = 0;
     quint64 m_generation = 0;

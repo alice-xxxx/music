@@ -15,14 +15,15 @@ ItemDelegate {
     required property string coverUrl
     required property string albumText
     required property var trackData
+    property bool artworkAlwaysVisible: false
     property bool removable: false
     signal albumRequested(var track)
     signal addToPlaylistRequested(var track)
     signal removeRequested
     readonly property bool current: trackKey === playbackController.trackKey
-    readonly property bool inViewport: visible && ListView.view !== null && y + height
-                                       >= ListView.view.contentY && y <= ListView.view.contentY
-                                       + ListView.view.height
+    readonly property bool inViewport: visible && (artworkAlwaysVisible ||
+                                      (!!ListView.view && y + height >= ListView.view.contentY &&
+                                       y <= ListView.view.contentY + ListView.view.height))
     onInViewportChanged: playbackController.setArtworkVisible(trackData, inViewport)
     onTrackKeyChanged: if (inViewport)
                            playbackController.setArtworkVisible(trackData, true)

@@ -51,7 +51,7 @@ class KuGouApi final : public QObject
     void hotSearches(std::function<void(QStringList, QString)> callback);
     void searchSuggestions(const QString &keywords,
                            std::function<void(QStringList, QString)> callback);
-    void dailyRecommendations(SearchCallback callback);
+    void dailyRecommendations(SearchCallback callback, bool fresh = false);
     void rankEntries(std::function<void(QVariantList, QString)> callback);
     void rankTracks(const QString &rankId, SearchCallback callback, int page = 1);
     void popularPlaylists(std::function<void(QVariantList, QString)> callback, int page = 1);
