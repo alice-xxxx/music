@@ -10,7 +10,7 @@ Rectangle {
     property bool circular: false
     property int pixelSize: Math.ceil(width * Screen.devicePixelRatio)
     readonly property int requestedSize: pixelSize <= 150 ? 150 : pixelSize <= 400 ? 400 : 800
-    color: Theme.surface
+    color: Theme.hoveredSurface
     radius: circular ? width / 2 : 8
     border.color: Theme.border
     implicitWidth: 48
@@ -34,9 +34,8 @@ Rectangle {
     Label {
         anchors.centerIn: parent
         visible: artwork.status !== Image.Ready
-        text: root.width < 88 ? "♪" : artwork.status === Image.Loading ? "加载中" :
-                                artwork.status === Image.Error ? "图片未加载" : "暂无图片"
-        font.pixelSize: Math.min(12, root.width / 5)
+        text: "♪"
+        font.pixelSize: Math.max(20, root.width / 4)
         color: Theme.textSecondary
     }
     Accessible.role: Accessible.Graphic

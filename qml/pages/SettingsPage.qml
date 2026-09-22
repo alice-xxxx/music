@@ -4,6 +4,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import "../theme"
+import "../components"
 
 Page {
     id: root
@@ -11,8 +12,8 @@ Page {
     required property var playbackController
     required property var sessionManager
 
-    signal closeRequested
     signal loginRequested
+    readonly property bool modalOpen: clearHistoryDialog.opened || diagnosticsFile.visible
     property string serviceError: ""
     property string serviceFeedback: ""
     FileDialog {
@@ -28,21 +29,6 @@ Page {
     }
     background: Rectangle {
         color: Theme.background
-    }
-    header: ToolBar {
-        RowLayout {
-            anchors.fill: parent
-            ToolButton {
-                text: "返回"
-                onClicked: root.closeRequested()
-            }
-            Label {
-                text: "设置"
-                font.pixelSize: 18
-                font.bold: true
-                Layout.fillWidth: true
-            }
-        }
     }
     Flickable {
         id: settingsScroll
@@ -72,7 +58,7 @@ Page {
                 ColumnLayout {
                     anchors.fill: parent
                     Label {
-                        text: "酷狗渠道后端"
+                        text: "音乐服务地址"
                         font.bold: true
                     }
                     Label {
@@ -94,7 +80,7 @@ Page {
                         Layout.fillWidth: true
                         text: root.appSettings.serviceUrl
                         placeholderText: "https://example.com/"
-                        Accessible.name: "酷狗渠道后端地址"
+                        Accessible.name: "音乐服务地址"
                     }
                     Button {
                         text: "应用地址"

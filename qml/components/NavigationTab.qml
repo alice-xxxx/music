@@ -4,17 +4,20 @@ import "../theme"
 
 TabButton {
     id: root
+    property bool sideNavigation: false
     implicitHeight: 48
     contentItem: Text {
         text: root.text
         font.pixelSize: root.font.pixelSize
         font.bold: root.checked
         color: root.checked ? Theme.accent : Theme.textSecondary
-        horizontalAlignment: Text.AlignHCenter
+        horizontalAlignment: root.sideNavigation ? Text.AlignLeft : Text.AlignHCenter
+        leftPadding: root.sideNavigation ? 16 : 0
         verticalAlignment: Text.AlignVCenter
     }
     background: Rectangle {
-        color: root.down || root.hovered ? Theme.hoveredSurface : "transparent"
+        radius: Theme.radius
+        color: root.down || root.hovered || (root.sideNavigation && root.checked) ? Theme.hoveredSurface : "transparent"
         border.width: root.visualFocus ? 1 : 0
         border.color: Theme.accent
         Rectangle {
@@ -24,7 +27,7 @@ TabButton {
             height: 3
             radius: 1.5
             color: Theme.accent
-            visible: root.checked
+            visible: root.checked && !root.sideNavigation
         }
     }
 }

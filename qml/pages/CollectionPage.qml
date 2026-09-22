@@ -14,11 +14,8 @@ Page {
     signal commentsRequested(string kind, string id, string title)
     property bool descriptionExpanded: false
 
-    function navigateBack() {
-        if (root.collection.goBack())
-            Qt.callLater(() => songs.contentY = root.collection.scrollPosition);
-        else
-            root.closeRequested();
+    function restorePosition() {
+        songs.contentY = root.collection.scrollPosition;
     }
     function savePosition() {
         root.collection.saveScrollPosition(songs.contentY);
@@ -26,23 +23,6 @@ Page {
 
     Component.onCompleted: Qt.callLater(() => songs.contentY = root.collection.scrollPosition)
     background: Rectangle { color: Theme.background }
-    header: ToolBar {
-        RowLayout {
-            anchors.fill: parent
-            ToolButton {
-                text: "返回"
-                onClicked: root.navigateBack()
-            }
-            Label {
-                text: root.collection.kind === "artist" ? "歌手" :
-                      root.collection.kind === "playlist" ? "歌单" :
-                      root.collection.kind === "rank" ? "排行榜" : "专辑"
-                font.bold: true
-                Layout.fillWidth: true
-            }
-        }
-    }
-
     ListView {
         id: songs
         anchors.top: parent.top
@@ -215,9 +195,5 @@ Page {
             Item { Layout.preferredHeight: 24 }
         }
         ScrollBar.vertical: ScrollBar {}
-    }
-    Shortcut {
-        sequence: "Escape"
-        onActivated: root.navigateBack()
     }
 }

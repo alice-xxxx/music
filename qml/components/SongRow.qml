@@ -29,52 +29,50 @@ ItemDelegate {
                            playbackController.setArtworkVisible(trackData, true)
     Component.onCompleted: playbackController.setArtworkVisible(trackData, inViewport)
     Component.onDestruction: playbackController.setArtworkVisible(trackData, false)
-    height: Math.max(64, contentItem.implicitHeight + 16)
+    leftPadding: 10
+    rightPadding: 6
+    height: Math.max(72, contentItem.implicitHeight + 16)
     onClicked: root.playbackController.playSong(root.trackData)
     Accessible.name: title + "，" + artistText
     background: Rectangle {
-        color: root.down || root.hovered ? Theme.hoveredSurface : "transparent"
+        radius: Theme.radius
+        color: root.current || root.down || root.hovered ? Theme.hoveredSurface : "transparent"
         border.width: root.visualFocus ? 1 : 0
         border.color: Theme.accent
     }
     contentItem: RowLayout {
         spacing: 12
-        Item {
-            Layout.preferredWidth: 18
-            Layout.preferredHeight: 24
-            Row {
-                visible: root.current
-                anchors.centerIn: parent
-                spacing: 3
-                Accessible.role: Accessible.StaticText
-                Accessible.name: root.playbackController.playing ? "正在播放" : "当前歌曲，已暂停"
-                Rectangle {
-                    width: 3
-                    height: root.playbackController.playing ? 8 : 14
-                    color: Theme.accent
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                Rectangle {
-                    width: 3
-                    height: root.playbackController.playing ? 18 : 14
-                    color: Theme.accent
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                Rectangle {
-                    visible: root.playbackController.playing
-                    width: 3
-                    height: 12
-                    color: Theme.accent
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-            }
-        }
         CoverImage {
             Layout.preferredWidth: 44
             Layout.preferredHeight: 44
             coverUrl: root.coverUrl
             entityName: root.title
             pixelSize: 100
+            objectName: "songArtwork"
+            Rectangle {
+                objectName: "currentTrackIndicator"
+                anchors.fill: parent
+                visible: root.current
+                color: "#80000000"
+                radius: parent.radius
+                Accessible.role: Accessible.StaticText
+                Accessible.name: root.playbackController.playing ? "正在播放" : "当前歌曲，已暂停"
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 3
+                    Repeater {
+                        model: root.playbackController.playing ? [9, 18, 13] : [14, 14]
+                        Rectangle {
+                            required property int modelData
+                            width: 3
+                            height: modelData
+                            anchors.verticalCenter: parent.verticalCenter
+                            radius: 1
+                            color: "#FFFFFF"
+                        }
+                    }
+                }
+            }
         }
         ColumnLayout {
             Layout.fillWidth: true

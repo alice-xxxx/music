@@ -20,27 +20,43 @@ ApplicationWindow {
     required property var libraryViewModel
 
     readonly property int homePage: 0
-    readonly property int searchPage: 1
+    readonly property int settingsPage: 1
     readonly property int libraryPage: 2
     readonly property int noOverlay: -1
     readonly property int nowPlayingOverlay: 0
-    readonly property int settingsOverlay: 1
     readonly property int collectionOverlay: 2
     readonly property bool iosPlatform: Qt.platform.os === "ios"
     readonly property bool mobilePlatform: Qt.platform.os === "android" || iosPlatform
     property var pendingAddTrack: ({})
     property var navigationHistory: []
-    property int currentPage: Math.max(homePage, Math.min(libraryPage, appSettings.lastPage))
+    property int currentPage: appSettings.lastPage === libraryPage ? libraryPage : homePage
     property int overlayPage: noOverlay
-    readonly property bool compact: width < 600
+    readonly property bool compact: width < 760
+    property bool searchActive: false
+    readonly property bool canGoBack: overlayPage !== noOverlay || searchActive ||
+                                      (currentPage === libraryPage && libraryContent.canGoBack)
+    readonly property bool modalOpen: loginDialog.opened || playlistPicker.opened ||
+                                      commentsDialog.opened || queueDrawer.opened ||
+                                      libraryContent.modalOpen || settingsContent.modalOpen || playingMenu.opened
     readonly property bool typing: activeFocusItem instanceof TextInput
                                    || activeFocusItem instanceof TextEdit
-    onCurrentPageChanged: appSettings.lastPage = currentPage
+    onCurrentPageChanged: if (currentPage !== settingsPage) appSettings.lastPage = currentPage
     Component.onCompleted: {
         if (mobilePlatform)
             showMaximized();
         if (appSettings.activeServiceUrl.length === 0)
-            overlayPage = settingsOverlay;
+            currentPage = settingsPage;
+    }
+
+    function selectPage(page) {
+        if (page !== homePage && page !== libraryPage && page !== settingsPage)
+            return;
+        searchContent.cancelPendingSearch();
+        pageHeader.releaseSearchFocus();
+        searchActive = false;
+        overlayPage = noOverlay;
+        navigationHistory = [];
+        currentPage = page;
     }
 
     function requestAddTrack(track) {
@@ -67,6 +83,7 @@ ApplicationWindow {
         }
     }
     function rememberPage() {
+        pageHeader.releaseSearchFocus();
         const detailPage = overlayLoader.item as CollectionPage;
         if (overlayPage === collectionOverlay && detailPage)
             detailPage.savePosition();
@@ -83,6 +100,7 @@ ApplicationWindow {
         if (overlayPage === page)
             return;
         rememberPage();
+        pageHeader.releaseSearchFocus();
         overlayPage = page;
     }
     function openAlbum(track) {
@@ -111,15 +129,32 @@ ApplicationWindow {
         }
     }
     function navigateBack() {
-        if (navigationHistory.length === 0) {
-            overlayPage = noOverlay;
+        if (modalOpen)
+            return;
+        pageHeader.releaseSearchFocus();
+        if (overlayPage === collectionOverlay && collectionViewModel.goBack()) {
+            Qt.callLater(() => {
+                if (overlayLoader.item)
+                    overlayLoader.item.restorePosition();
+            });
             return;
         }
-        const previous = navigationHistory[navigationHistory.length - 1];
-        navigationHistory = navigationHistory.slice(0, -1);
-        if (previous.page === collectionOverlay)
-            collectionViewModel.restoreState(previous.collection);
-        overlayPage = previous.page;
+        if (overlayPage !== noOverlay) {
+            if (navigationHistory.length === 0) {
+                overlayPage = noOverlay;
+                return;
+            }
+            const previous = navigationHistory[navigationHistory.length - 1];
+            navigationHistory = navigationHistory.slice(0, -1);
+            if (previous.page === collectionOverlay)
+                collectionViewModel.restoreState(previous.collection);
+            overlayPage = previous.page;
+        } else if (searchActive) {
+            searchContent.cancelPendingSearch();
+            searchActive = false;
+        } else if (currentPage === libraryPage) {
+            libraryContent.navigateBack();
+        }
     }
 
     width: mobilePlatform ? Screen.width : 1100
@@ -130,6 +165,7 @@ ApplicationWindow {
     visible: true
     color: Theme.background
     title: "音乐"
+    font.pixelSize: 14
     palette.window: Theme.background
     palette.base: Theme.surface
     palette.button: Theme.surface
@@ -137,6 +173,10 @@ ApplicationWindow {
     palette.text: Theme.textPrimary
     palette.windowText: Theme.textPrimary
     palette.highlight: Theme.accent
+    palette.highlightedText: Theme.accentText
+    palette.placeholderText: Theme.textSecondary
+    palette.mid: Theme.border
+    palette.dark: Theme.border
     Binding {
         target: Theme
         property: "dark"
@@ -144,7 +184,7 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Space"
-        enabled: !window.typing && !loginDialog.opened && !playlistPicker.opened
+        enabled: !window.typing && !loginDialog.opened && !playlistPicker.opened && !commentsDialog.opened
         onActivated: window.playbackController.togglePlayback()
     }
     Shortcut {
@@ -168,33 +208,10 @@ ApplicationWindow {
                 window.pendingAddTrack = ({});
         }
     }
-    header: ToolBar {
-        visible: window.compact && window.overlayPage === window.noOverlay
-        contentHeight: 56
-        Label {
-            anchors.left: parent.left
-            anchors.leftMargin: 16
-            anchors.verticalCenter: parent.verticalCenter
-            text: window.currentPage === window.homePage ? "发现" :
-                  window.currentPage === window.searchPage ? "搜索" : "音乐库"
-            font.pixelSize: 20
-            font.bold: true
-        }
-        Row {
-            anchors.right: parent.right
-            anchors.rightMargin: 8
-            anchors.verticalCenter: parent.verticalCenter
-            ToolButton {
-                text: "设置"
-                onClicked: window.openOverlay(window.settingsOverlay)
-            }
-            ToolButton {
-                text: window.sessionManager.authenticated ? "账号" : "登录"
-                onClicked: window.sessionManager.authenticated
-                           ? window.openOverlay(window.settingsOverlay) :
-                                                                   loginDialog.open()
-            }
-        }
+    Shortcut {
+        sequences: ["Escape", "Back", "Alt+Left"]
+        enabled: window.canGoBack && !window.modalOpen
+        onActivated: window.navigateBack()
     }
     QueueDrawer {
         id: queueDrawer
@@ -224,7 +241,7 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
         Pane {
-            Layout.preferredWidth: 212
+            Layout.preferredWidth: 208
             Layout.fillHeight: true
             visible: !window.compact && window.overlayPage !== window.nowPlayingOverlay
             padding: 16
@@ -233,42 +250,42 @@ ApplicationWindow {
                 border.color: Theme.border
             }
             ColumnLayout {
-                width: parent.width
+                anchors.fill: parent
+                spacing: 8
+                Label {
+                    text: "音乐"
+                    font.pixelSize: 24
+                    font.bold: true
+                    Layout.leftMargin: 16
+                    Layout.topMargin: 20
+                    Layout.bottomMargin: 32
+                }
                 NavigationTab {
                     text: "发现"
                     checkable: true
+                    sideNavigation: true
                     checked: window.currentPage === window.homePage
                     Layout.fillWidth: true
-                    onClicked: window.currentPage = window.homePage
-                }
-                NavigationTab {
-                    text: "搜索"
-                    checkable: true
-                    checked: window.currentPage === window.searchPage
-                    Layout.fillWidth: true
-                    onClicked: window.currentPage = window.searchPage
+                    onClicked: window.selectPage(window.homePage)
                 }
                 NavigationTab {
                     text: "音乐库"
                     checkable: true
+                    sideNavigation: true
                     checked: window.currentPage === window.libraryPage
                     Layout.fillWidth: true
-                    onClicked: window.currentPage = window.libraryPage
+                    onClicked: window.selectPage(window.libraryPage)
                 }
                 Item {
                     Layout.fillHeight: true
                 }
-                Button {
-                    text: window.sessionManager.authenticated ? "酷狗账号已连接" : "登录酷狗"
-                    Layout.fillWidth: true
-                    onClicked: window.sessionManager.authenticated
-                               ? window.openOverlay(window.settingsOverlay) :
-                                                                      loginDialog.open()
-                }
-                Button {
+                NavigationTab {
                     text: "设置"
+                    checkable: true
+                    sideNavigation: true
+                    checked: window.currentPage === window.settingsPage
                     Layout.fillWidth: true
-                    onClicked: window.openOverlay(window.settingsOverlay)
+                    onClicked: window.selectPage(window.settingsPage)
                 }
             }
         }
@@ -276,22 +293,83 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
-            StackLayout {
-                currentIndex: window.overlayPage === window.noOverlay ? 0 : 1
+            PageHeader {
+                id: pageHeader
+                Layout.fillWidth: true
+                canGoBack: window.canGoBack
+                searchVisible: window.overlayPage === window.noOverlay
+                searching: window.searchActive && window.overlayPage === window.noOverlay
+                query: window.searchViewModel.query
+                title: window.overlayPage === window.nowPlayingOverlay ? "正在播放" :
+                       window.overlayPage === window.collectionOverlay ?
+                           (window.collectionViewModel.kind === "artist" ? "歌手" :
+                            window.collectionViewModel.kind === "album" ? "专辑" : "歌单") :
+                       window.currentPage === window.homePage ? "发现" :
+                       window.currentPage === window.libraryPage ? libraryContent.pageTitle : "设置"
+                moreVisible: window.overlayPage === window.nowPlayingOverlay
+                onBackRequested: window.navigateBack()
+                onSearchStarted: window.searchActive = true
+                onQueryEdited: (query, composing) => {
+                    window.searchActive = true;
+                    searchContent.editQuery(query, composing);
+                }
+                onSearchSubmitted: {
+                    searchContent.submit();
+                    releaseSearchFocus();
+                }
+                onMoreRequested: playingMenu.open()
+                Menu {
+                    id: playingMenu
+                    MenuItem {
+                        text: "歌曲评论"
+                        enabled: !!window.playbackController.currentTrack.albumAudioId
+                        onTriggered: window.openComments("song", window.playbackController.currentTrack.albumAudioId,
+                                                        window.playbackController.title)
+                    }
+                }
+            }
+            Item {
+                id: pageArea
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 StackLayout {
-                    currentIndex: window.currentPage
-                    DiscoverPage {
-                        showHeading: !window.compact
-                        discoverViewModel: window.discoverViewModel
-                        playbackController: window.playbackController
-                        onEntryRequested: entry => window.openEntry(entry)
-                        onAlbumRequested: track => window.openAlbum(track)
-                        onAddToPlaylistRequested: track => window.requestAddTrack(track)
+                    anchors.fill: parent
+                    currentIndex: window.overlayPage !== window.noOverlay ? 2 : window.searchActive ? 1 : 0
+                    StackLayout {
+                        currentIndex: window.currentPage
+                        DiscoverPage {
+                            showHeading: false
+                            discoverViewModel: window.discoverViewModel
+                            playbackController: window.playbackController
+                            onEntryRequested: entry => window.openEntry(entry)
+                            onAlbumRequested: track => window.openAlbum(track)
+                            onAddToPlaylistRequested: track => window.requestAddTrack(track)
+                        }
+                        SettingsPage {
+                            id: settingsContent
+                            appSettings: window.appSettings
+                            playbackController: window.playbackController
+                            sessionManager: window.sessionManager
+                            onLoginRequested: loginDialog.open()
+                        }
+                        LibraryPage {
+                            id: libraryContent
+                            showHeading: false
+                            onAddToPlaylistRequested: track => window.requestAddTrack(track)
+                            onAlbumRequested: track => window.openAlbum(track)
+                            favorites: window.favorites
+                            libraryViewModel: window.libraryViewModel
+                            sessionManager: window.sessionManager
+                            playbackController: window.playbackController
+                            active: window.currentPage === window.libraryPage
+                            onLoginRequested: loginDialog.open()
+                        }
                     }
                     SearchPage {
-                        showHeading: !window.compact
+                        id: searchContent
+                        showHeading: false
+                        showSearchInput: false
+                        searchFocused: pageHeader.searchFocused
                         onEntryRequested: entry => window.openEntry(entry)
                         onAddToPlaylistRequested: track => window.requestAddTrack(track)
                         onAlbumRequested: track => window.openAlbum(track)
@@ -299,24 +377,27 @@ ApplicationWindow {
                         playbackController: window.playbackController
                         onLoginRequested: loginDialog.open()
                     }
-                    LibraryPage {
-                        showHeading: !window.compact
-                        onAddToPlaylistRequested: track => window.requestAddTrack(track)
-                        onAlbumRequested: track => window.openAlbum(track)
-                        favorites: window.favorites
-                        libraryViewModel: window.libraryViewModel
-                        sessionManager: window.sessionManager
-                        playbackController: window.playbackController
-                        active: window.currentPage === window.libraryPage
-                        onLoginRequested: loginDialog.open()
+                    Loader {
+                        id: overlayLoader
+                        active: window.overlayPage !== window.noOverlay
+                        sourceComponent: window.overlayPage === window.nowPlayingOverlay
+                                         ? nowPlayingComponent : collectionComponent
                     }
                 }
-                Loader {
-                    id: overlayLoader
-                    active: window.overlayPage !== window.noOverlay
-                    sourceComponent: window.overlayPage === window.nowPlayingOverlay
-                                     ? nowPlayingComponent : window.overlayPage === window.collectionOverlay
-                                                               ? collectionComponent : settingsComponent
+                EdgeBackGesture {
+                    objectName: "leftBackGesture"
+                    anchors.left: parent.left
+                    height: parent.height
+                    enabled: window.compact && window.canGoBack && !window.modalOpen
+                    onBackRequested: window.navigateBack()
+                }
+                EdgeBackGesture {
+                    objectName: "rightBackGesture"
+                    anchors.right: parent.right
+                    height: parent.height
+                    fromRight: true
+                    enabled: window.compact && window.canGoBack && !window.modalOpen
+                    onBackRequested: window.navigateBack()
                 }
             }
             PlayerBar {
@@ -329,17 +410,19 @@ ApplicationWindow {
             }
             TabBar {
                 visible: window.compact && window.overlayPage === window.noOverlay
-                currentIndex: window.currentPage
+                currentIndex: [window.homePage, window.libraryPage, window.settingsPage].indexOf(window.currentPage)
                 Layout.fillWidth: true
-                onCurrentIndexChanged: window.currentPage = currentIndex
                 NavigationTab {
                     text: "发现"
-                }
-                NavigationTab {
-                    text: "搜索"
+                    onClicked: window.selectPage(window.homePage)
                 }
                 NavigationTab {
                     text: "音乐库"
+                    onClicked: window.selectPage(window.libraryPage)
+                }
+                NavigationTab {
+                    text: "设置"
+                    onClicked: window.selectPage(window.settingsPage)
                 }
             }
         }
@@ -422,16 +505,6 @@ ApplicationWindow {
             collection: window.collectionViewModel
             player: window.playbackController
             onCloseRequested: window.navigateBack()
-        }
-    }
-    Component {
-        id: settingsComponent
-        SettingsPage {
-            appSettings: window.appSettings
-            playbackController: window.playbackController
-            sessionManager: window.sessionManager
-            onCloseRequested: window.navigateBack()
-            onLoginRequested: loginDialog.open()
         }
     }
 }

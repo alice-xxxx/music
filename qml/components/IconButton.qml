@@ -1,8 +1,9 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls as Controls
 import "../theme"
 
-Button {
+Controls.Button {
     id: root
     required property string symbol
     property bool primary: false
@@ -13,9 +14,12 @@ Button {
     icon.source: "../icons/" + symbol + ".svg"
     icon.width: root.primary ? 28 : 23
     icon.height: root.primary ? 28 : 23
-    icon.color: root.primary ? "white" : !root.enabled ? Theme.textSecondary : root.checked
+    icon.color: root.primary ? Theme.accentText : !root.enabled ? Theme.textSecondary : root.checked
                                                          ? Theme.accent : Theme.textPrimary
     Accessible.name: text
+    ToolTip.visible: hovered && text.length > 0
+    ToolTip.text: text
+    ToolTip.delay: 600
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : 0.4
     background: Rectangle {

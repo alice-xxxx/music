@@ -20,6 +20,20 @@ Page {
     property int section: playlistsSection
     property bool active: false
     property bool showHeading: true
+    readonly property bool canGoBack: detail || section !== playlistsSection
+    readonly property string pageTitle: detail ? libraryViewModel.title :
+                                        section === recentSection ? "最近播放" :
+                                        section === favoritesSection ? "喜欢的音乐" : "音乐库"
+    readonly property bool modalOpen: createDialog.opened || editDialog.opened ||
+                                      deleteDialog.opened || clearHistoryDialog.opened
+    function navigateBack() {
+        if (detail) {
+            libraryViewModel.closePlaylist();
+            Qt.callLater(() => playlists.contentY = playlistScrollY);
+        } else {
+            section = playlistsSection;
+        }
+    }
     property bool loaded: false
     property real playlistScrollY: 0
     readonly property bool detail: section === playlistsSection && libraryViewModel.title.length > 0
@@ -70,8 +84,8 @@ Page {
             text: root.detail ? root.libraryViewModel.title :
                   root.section === root.recentSection ? "最近播放" :
                   root.section === root.favoritesSection ? "喜欢的音乐" : "音乐库"
-            visible: root.showHeading || root.detail || root.section !== root.playlistsSection
-            font.pixelSize: root.detail ? 24 : 28
+            visible: root.showHeading
+            font.pixelSize: root.detail ? 24 : Theme.pageTitleSize
             font.bold: true
             wrapMode: Text.Wrap
             Layout.fillWidth: true
@@ -81,13 +95,17 @@ Page {
             visible: !root.detail && root.section === root.playlistsSection
             Layout.fillWidth: true
             Button {
-                text: "喜欢的音乐 · " + root.favorites.tracks.length
+                text: "喜欢的音乐" + (root.sessionManager.authenticated ? " · " + root.favorites.tracks.length : "")
+                implicitHeight: 80
+                font.bold: true
                 Layout.fillWidth: true
                 onClicked: root.sessionManager.authenticated ? root.section = root.favoritesSection :
                                                                  root.loginRequested()
             }
             Button {
                 text: "最近播放 · " + root.playbackController.recentTracks.length
+                implicitHeight: 80
+                font.bold: true
                 Layout.fillWidth: true
                 onClicked: root.section = root.recentSection
             }
@@ -95,17 +113,6 @@ Page {
         RowLayout {
             visible: root.section !== root.playlistsSection || root.detail
             Layout.fillWidth: true
-            ToolButton {
-                text: root.detail ? "返回我的歌单" : "返回音乐库"
-                onClicked: {
-                    if (root.detail) {
-                        root.libraryViewModel.closePlaylist();
-                        Qt.callLater(() => playlists.contentY = root.playlistScrollY);
-                    } else {
-                        root.section = root.playlistsSection;
-                    }
-                }
-            }
             Item { Layout.fillWidth: true }
             ToolButton {
                 visible: root.section === root.recentSection
@@ -204,7 +211,7 @@ Page {
             RowLayout {
                 anchors.fill: parent
                 Label {
-                    text: "登录后查看和管理酷狗渠道歌单"
+                    text: "登录后同步你的歌单与收藏"
                     color: Theme.textSecondary
                     wrapMode: Text.Wrap
                     Layout.fillWidth: true
@@ -366,6 +373,10 @@ Page {
                      root.libraryViewModel.errorMessage.length === 0
             text: "还没有歌单，创建一个开始整理音乐"
             color: Theme.textSecondary
+        }
+        Item {
+            visible: !root.songSection && !root.sessionManager.authenticated
+            Layout.fillHeight: true
         }
         Item { Layout.preferredHeight: 8 }
     }

@@ -85,6 +85,16 @@ qt_add_qml_module(MusicApp
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/components/Button.qml
+        qml/components/PageHeader.qml
+        qml/components/EdgeBackGesture.qml
+        qml/components/ToolButton.qml
+        qml/components/ComboBox.qml
+        qml/components/Dialog.qml
+        qml/components/Frame.qml
+        qml/components/TextField.qml
+        qml/components/ToolBar.qml
+        qml/components/Slider.qml
         qml/components/IconButton.qml
         qml/components/NavigationTab.qml
         qml/components/CoverImage.qml

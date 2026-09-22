@@ -28,21 +28,6 @@ Page {
     background: Rectangle {
         color: Theme.background
     }
-    header: ToolBar {
-        RowLayout {
-            anchors.fill: parent
-            ToolButton {
-                text: "返回"
-                implicitHeight: 48
-                onClicked: root.closeRequested()
-            }
-            Label {
-                text: "正在播放"
-                font.bold: true
-                Layout.fillWidth: true
-            }
-        }
-    }
     Connections {
         target: root.player.lyricLines
         function onCurrentIndexChanged() {
@@ -56,7 +41,7 @@ Page {
     readonly property bool wide: width >= 960
     RowLayout {
         anchors.centerIn: parent
-        width: Math.min(parent.width - 48, 1120)
+        width: Math.min(parent.width - (root.width < 600 ? 32 : 64), root.wide ? 1120 : 480)
         height: Math.max(0, parent.height - 32)
         spacing: root.wide ? 64 : 0
         ColumnLayout {
@@ -64,84 +49,69 @@ Page {
             Layout.preferredWidth: root.wide ? 400 : 0
             Layout.fillWidth: !root.wide
             Layout.fillHeight: true
-            spacing: 8
+            spacing: 6
+            Label {
+                objectName: "playingTitle"
+                text: root.player.title || "尚未播放"
+                font.pixelSize: root.font.pixelSize * 1.65
+                font.bold: true
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                horizontalAlignment: root.wide ? Text.AlignLeft : Text.AlignHCenter
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+                Button {
+                    id: artistLink
+                    text: root.player.artist || "歌手信息暂缺"
+                    flat: true
+                    Layout.maximumWidth: parent.width * 0.5
+                    enabled: (root.player.currentTrack.artists || []).length > 0
+                    onClicked: artistMenu.open()
+                    Menu {
+                        id: artistMenu
+                        Instantiator {
+                            model: root.player.currentTrack.artists || []
+                            delegate: MenuItem {
+                                required property var modelData
+                                text: modelData.name
+                                onTriggered: root.artistRequested(modelData)
+                            }
+                            onObjectAdded: (index, object) => artistMenu.insertItem(index,
+                                                                                    object)
+                            onObjectRemoved: (index, object) => artistMenu.removeItem(object)
+                        }
+                    }
+                }
+                Label {
+                    text: "·"
+                    color: Theme.textSecondary
+                }
+                Button {
+                    id: albumLink
+                    text: root.player.currentTrack.album || "专辑信息暂缺"
+                    flat: true
+                    Layout.fillWidth: true
+                    enabled: !!root.player.currentTrack.albumId
+                    onClicked: root.albumRequested(root.player.currentTrack)
+                }
+            }
             Item {
                 id: primaryContent
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: 120
-                Flickable {
-                    id: identityScroll
-                    anchors.fill: parent
+                Layout.minimumHeight: 100
+                CoverImage {
+                    objectName: "playingArtwork"
                     visible: root.wide || !root.showLyrics
-                    contentHeight: identity.implicitHeight
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar {}
-                    ColumnLayout {
-                        id: identity
-                        width: identityScroll.width
-                        spacing: 12
-                        Item {
-                            id: artworkArea
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Math.min(width, root.wide ? 400 : 360,
-                                                             Math.max(120,
-                                                                      primaryContent.height - 88))
-                            CoverImage {
-                                entityName: root.player.title
-                                anchors.centerIn: parent
-                                width: parent.height
-                                height: width
-                                coverUrl: root.player.currentTrack.coverUrl || ""
-                            }
-                        }
-                        Label {
-                            text: root.player.title || "尚未播放"
-                            font.pixelSize: root.font.pixelSize * 1.65
-                            font.bold: true
-                            wrapMode: Text.Wrap
-                            Layout.fillWidth: true
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 4
-                            Button {
-                                id: artistLink
-                                text: root.player.artist || "歌手信息暂缺"
-                                flat: true
-                                Layout.maximumWidth: parent.width * 0.5
-                                enabled: (root.player.currentTrack.artists || []).length > 0
-                                onClicked: artistMenu.open()
-                                Menu {
-                                    id: artistMenu
-                                    Instantiator {
-                                        model: root.player.currentTrack.artists || []
-                                        delegate: MenuItem {
-                                            required property var modelData
-                                            text: modelData.name
-                                            onTriggered: root.artistRequested(modelData)
-                                        }
-                                        onObjectAdded: (index, object) => artistMenu.insertItem(index,
-                                                                                                object)
-                                        onObjectRemoved: (index, object) => artistMenu.removeItem(object)
-                                    }
-                                }
-                            }
-                            Label {
-                                text: "·"
-                                color: Theme.textSecondary
-                            }
-                            Button {
-                                id: albumLink
-                                text: root.player.currentTrack.album || "专辑信息暂缺"
-                                flat: true
-                                Layout.fillWidth: true
-                                enabled: !!root.player.currentTrack.albumId
-                                onClicked: root.albumRequested(root.player.currentTrack)
-                            }
-                        }
-                    }
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width, parent.height, root.wide ? 400 : 360)
+                    height: width
+                    entityName: root.player.title
+                    coverUrl: root.player.currentTrack.coverUrl || ""
                 }
             }
             Label {
@@ -182,6 +152,7 @@ Page {
                 }
                 onPressedChanged: if (!pressed)
                                       root.player.seek(value)
+                onMoved: if (!pressed) root.player.seek(value)
                 Accessible.name: "播放进度"
             }
             RowLayout {
@@ -230,7 +201,7 @@ Page {
             }
             RowLayout {
                 Layout.alignment: Qt.AlignHCenter
-                spacing: 8
+                spacing: root.width < 400 ? 4 : 12
                 IconButton {
                     symbol: "heart"
                     text: root.favorites.uncertain ? "查询喜欢状态" : root.favorites.liked ? "取消喜欢" : "喜欢"
@@ -239,11 +210,7 @@ Page {
                     enabled: !root.favorites.busy && root.player.hasCurrentTrack
                     onClicked: root.favorites.toggle()
                 }
-                Button {
-                    text: "评论"
-                    enabled: !!root.player.currentTrack.albumAudioId
-                    onClicked: root.commentsRequested(root.player.currentTrack)
-                }
+
                 IconButton {
                     symbol: "shuffle"
                     text: root.player.shuffle ? "关闭随机播放" : "开启随机播放"
@@ -284,14 +251,6 @@ Page {
         parent: root.wide ? desktopLyrics : primaryContent
         anchors.fill: parent
         visible: root.wide || root.showLyrics
-        Label {
-            text: root.player.title + (root.player.artist ? " · " + root.player.artist : "")
-            visible: !root.wide
-            Layout.fillWidth: true
-            horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideRight
-            font.bold: true
-        }
         ListView {
             id: lyricList
             Layout.fillWidth: true
@@ -313,7 +272,7 @@ Page {
                 textFormat: Text.PlainText
                 wrapMode: Text.Wrap
                 horizontalAlignment: root.wide ? Text.AlignLeft : Text.AlignHCenter
-                font.pixelSize: root.font.pixelSize * (root.wide ? 1.8 : 1.4)
+                font.pixelSize: root.font.pixelSize * (root.wide ? 2 : 1.5)
                 font.bold: lyricRow.index === root.player.lyricLines.currentIndex
                 color: lyricRow.index === root.player.lyricLines.currentIndex ? Theme.accent :
                                                                                 Theme.textSecondary
@@ -353,9 +312,4 @@ Page {
         }
     }
 
-    Shortcut {
-        sequence: "Escape"
-        enabled: true
-        onActivated: root.closeRequested()
-    }
 }

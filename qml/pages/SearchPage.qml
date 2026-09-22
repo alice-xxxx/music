@@ -15,6 +15,24 @@ Page {
     signal addToPlaylistRequested(var track)
     property bool waiting: false
     property bool showHeading: true
+    property bool showSearchInput: true
+    property bool searchFocused: false
+    function cancelPendingSearch() {
+        debounce.stop();
+        suggestionDebounce.stop();
+    }
+    function editQuery(query, composing) {
+        searchViewModel.query = query;
+        cancelPendingSearch();
+        if (!composing) {
+            suggestionDebounce.restart();
+            debounce.restart();
+        }
+    }
+    function submit() {
+        cancelPendingSearch();
+        searchViewModel.submitSearch();
+    }
     property bool longWait: false
     property real entryScroll: 0
     property bool restoreEntryScroll: false
@@ -70,18 +88,19 @@ Page {
         Label {
             text: "搜索音乐"
             visible: root.showHeading
-            font.pixelSize: 28
+            font.pixelSize: Theme.pageTitleSize
             font.bold: true
             color: Theme.textPrimary
         }
         Item {
+            visible: root.showSearchInput
             Layout.fillWidth: true
             implicitHeight: input.implicitHeight
             TextField {
                 id: input
                 anchors.left: parent.left
                 anchors.right: parent.right
-                placeholderText: "输入关键词搜索音乐"
+                placeholderText: "歌曲、歌手、专辑或歌单"
                 rightPadding: clearSearch.visible ? 52 : 12
                 text: root.searchViewModel.query
                 onTextEdited: {
@@ -121,7 +140,7 @@ Page {
             }
         }
         Frame {
-            visible: input.activeFocus && root.searchViewModel.suggestions.length > 0
+            visible: (root.showSearchInput ? input.activeFocus : root.searchFocused) && root.searchViewModel.suggestions.length > 0
             Layout.fillWidth: true
             padding: 6
             Flow {
@@ -213,7 +232,7 @@ Page {
             Layout.fillWidth: true
             spacing: 8
             Repeater {
-                model: root.searchViewModel.hotKeywords.slice(0, 12)
+                model: root.searchViewModel.hotKeywords.slice(0, 6)
                 Button {
                     required property string modelData
                     text: modelData
