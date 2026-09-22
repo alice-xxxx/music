@@ -199,6 +199,7 @@ ApplicationWindow {
     }
     LoginDialog {
         id: loginDialog
+        objectName: "loginDialog"
         sessionManager: window.sessionManager
         onClosed: {
             window.favorites.cancelPending();
@@ -209,19 +210,23 @@ ApplicationWindow {
         }
     }
     Shortcut {
-        sequences: ["Escape", "Back", "Alt+Left"]
+        sequences: ["Escape", "Back", Qt.platform.os === "osx" ? "Meta+[" : "Alt+Left"]
+        objectName: "navigationShortcut"
         enabled: window.canGoBack && !window.modalOpen
         onActivated: window.navigateBack()
     }
     QueueDrawer {
         id: queueDrawer
+        objectName: "queueDrawer"
         player: window.playbackController
     }
     Popup {
         id: actionToast
         property string message: ""
         x: Math.max(16, (window.width - width) / 2)
-        y: window.height - height - (window.compact ? 92 : 24)
+        y: Math.max(8, window.contentItem.height - height - 16
+                    - (playerBar.visible ? playerBar.height : 0)
+                    - (bottomNavigation.visible ? bottomNavigation.height : 0))
         width: Math.min(440, window.width - 32)
         modal: false
         closePolicy: Popup.NoAutoClose
@@ -330,6 +335,7 @@ ApplicationWindow {
             }
             Item {
                 id: pageArea
+                objectName: "pageArea"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 StackLayout {
@@ -347,6 +353,7 @@ ApplicationWindow {
                         }
                         SettingsPage {
                             id: settingsContent
+                            objectName: "settingsContent"
                             appSettings: window.appSettings
                             playbackController: window.playbackController
                             sessionManager: window.sessionManager
@@ -354,6 +361,7 @@ ApplicationWindow {
                         }
                         LibraryPage {
                             id: libraryContent
+                            objectName: "libraryContent"
                             showHeading: false
                             onAddToPlaylistRequested: track => window.requestAddTrack(track)
                             onAlbumRequested: track => window.openAlbum(track)
@@ -367,6 +375,7 @@ ApplicationWindow {
                     }
                     SearchPage {
                         id: searchContent
+                        objectName: "searchContent"
                         showHeading: false
                         showSearchInput: false
                         searchFocused: pageHeader.searchFocused
@@ -401,6 +410,7 @@ ApplicationWindow {
                 }
             }
             PlayerBar {
+                id: playerBar
                 playbackController: window.playbackController
                 visible: window.playbackController.hasCurrentTrack &&
                          window.overlayPage !== window.nowPlayingOverlay
@@ -409,6 +419,7 @@ ApplicationWindow {
                 onQueueRequested: queueDrawer.open()
             }
             TabBar {
+                id: bottomNavigation
                 visible: window.compact && window.overlayPage === window.noOverlay
                 currentIndex: [window.homePage, window.libraryPage, window.settingsPage].indexOf(window.currentPage)
                 Layout.fillWidth: true
@@ -479,15 +490,12 @@ ApplicationWindow {
     Component {
         id: nowPlayingComponent
         NowPlayingPage {
-            onCommentsRequested: track => window.openComments("song", track.albumAudioId,
-                                                              track.title)
             onArtistRequested: artist => window.openArtist(artist)
             onAlbumRequested: track => {
                 window.openAlbum(track);
             }
             favorites: window.favorites
             player: window.playbackController
-            onCloseRequested: window.navigateBack()
             onQueueRequested: queueDrawer.open()
         }
     }
@@ -504,7 +512,6 @@ ApplicationWindow {
             onAddToPlaylistRequested: track => window.requestAddTrack(track)
             collection: window.collectionViewModel
             player: window.playbackController
-            onCloseRequested: window.navigateBack()
         }
     }
 }

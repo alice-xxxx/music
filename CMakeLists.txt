@@ -87,6 +87,7 @@ qt_add_qml_module(MusicApp
         qml/Main.qml
         qml/components/Button.qml
         qml/components/PageHeader.qml
+        qml/components/PlayingCover.qml
         qml/components/EdgeBackGesture.qml
         qml/components/ToolButton.qml
         qml/components/ComboBox.qml

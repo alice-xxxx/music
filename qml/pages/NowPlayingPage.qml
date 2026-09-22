@@ -10,9 +10,7 @@ Page {
     id: root
     required property var favorites
     required property var player
-    signal closeRequested
     signal queueRequested
-    signal commentsRequested(var track)
     signal albumRequested(var track)
     signal artistRequested(var artist)
     property bool showLyrics: false
@@ -68,7 +66,9 @@ Page {
                     id: artistLink
                     text: root.player.artist || "歌手信息暂缺"
                     flat: true
-                    Layout.maximumWidth: parent.width * 0.5
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    Layout.minimumWidth: 0
                     enabled: (root.player.currentTrack.artists || []).length > 0
                     onClicked: artistMenu.open()
                     Menu {
@@ -95,6 +95,8 @@ Page {
                     text: root.player.currentTrack.album || "专辑信息暂缺"
                     flat: true
                     Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    Layout.minimumWidth: 0
                     enabled: !!root.player.currentTrack.albumId
                     onClicked: root.albumRequested(root.player.currentTrack)
                 }
@@ -282,21 +284,20 @@ Page {
                     }
                 }
             }
-            Column {
-                anchors.centerIn: parent
-                width: parent.width
-                spacing: 12
+            ScrollView {
+                id: fallbackLyrics
+                anchors.fill: parent
                 visible: lyricList.count === 0
+                clip: true
+                contentWidth: availableWidth
                 Label {
-                    text: "歌词"
-                    font.pixelSize: 24
-                    font.bold: true
-                    color: Theme.textPrimary
-                }
-                Label {
+                    width: fallbackLyrics.availableWidth
+                    padding: 16
                     text: root.player.lyrics || "这首歌暂时没有同步歌词"
-                    width: parent.width
+                    textFormat: Text.PlainText
                     wrapMode: Text.Wrap
+                    font.pixelSize: root.font.pixelSize * 1.3
+                    lineHeight: 1.5
                     color: Theme.textSecondary
                 }
             }

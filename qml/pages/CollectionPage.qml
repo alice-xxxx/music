@@ -9,22 +9,33 @@ Page {
     id: root
     required property var collection
     required property var player
-    signal closeRequested
     signal addToPlaylistRequested(var track)
     signal commentsRequested(string kind, string id, string title)
     property bool descriptionExpanded: false
 
     function restorePosition() {
-        songs.contentY = root.collection.scrollPosition;
+        songs.positionViewAtBeginning();
+        songs.contentY += Math.max(0, root.collection.scrollPosition);
+    }
+    function scrollOffset() {
+        return Math.max(0, songs.contentY - songs.originY);
     }
     function savePosition() {
-        root.collection.saveScrollPosition(songs.contentY);
+        root.collection.saveScrollPosition(scrollOffset());
     }
 
-    Component.onCompleted: Qt.callLater(() => songs.contentY = root.collection.scrollPosition)
+    Component.onCompleted: Qt.callLater(root.restorePosition)
+    Connections {
+        target: root.collection
+        function onOpened() {
+            root.descriptionExpanded = false;
+            Qt.callLater(root.restorePosition);
+        }
+    }
     background: Rectangle { color: Theme.background }
     ListView {
         id: songs
+        objectName: "collectionSongs"
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.horizontalCenter: parent.horizontalCenter
@@ -41,13 +52,13 @@ Page {
             Item { Layout.preferredHeight: root.width < 600 ? 1 : 8 }
             GridLayout {
                 Layout.fillWidth: true
-                columns: root.width < 720 ? 1 : 2
+                columns: 2
                 columnSpacing: 24
                 rowSpacing: 16
                 CoverImage {
-                    Layout.preferredWidth: root.width < 720 ? 136 : 200
+                    Layout.preferredWidth: root.width < 720 ? 96 : 180
                     Layout.preferredHeight: Layout.preferredWidth
-                    Layout.alignment: root.width < 720 ? Qt.AlignHCenter : Qt.AlignTop
+                    Layout.alignment: Qt.AlignTop
                     coverUrl: root.collection.coverUrl
                     entityName: root.collection.title
                     imageKind: root.collection.kind === "artist" ? "头像" : "封面"
@@ -63,44 +74,48 @@ Page {
                         font.bold: true
                         wrapMode: Text.Wrap
                         Layout.fillWidth: true
-                        horizontalAlignment: root.width < 720 ? Text.AlignHCenter : Text.AlignLeft
+                        horizontalAlignment: Text.AlignLeft
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
                     }
                     Label {
                         text: root.collection.tracks.length + (root.collection.hasMore ? "+ 首" : " 首")
                         color: Theme.textSecondary
-                        Layout.alignment: root.width < 720 ? Qt.AlignHCenter : Qt.AlignLeft
+                        Layout.alignment: Qt.AlignLeft
                     }
-                    Button {
-                        text: root.collection.kind === "artist" ? "播放热门歌曲" :
-                              root.collection.kind === "rank" ? "播放榜单" :
-                              root.collection.kind === "playlist" ? "播放全部" : "播放专辑"
-                        highlighted: true
-                        enabled: root.collection.tracks.length > 0
-                        Layout.alignment: root.width < 720 ? Qt.AlignHCenter : Qt.AlignLeft
-                        onClicked: root.player.playCollection(root.collection.tracks, 0,
-                                                              root.collection.source)
-                    }
-                    Button {
-                        visible: root.collection.kind === "playlist"
-                        text: root.collection.favoriteBusy ? "处理中…" :
-                              root.collection.favorited ?
-                              (root.collection.canUnfavorite ? "取消收藏" : "已在音乐库") : "收藏歌单"
-                        enabled: !root.collection.favoriteBusy &&
-                                 (!root.collection.favorited || root.collection.canUnfavorite)
-                        Layout.alignment: root.width < 720 ? Qt.AlignHCenter : Qt.AlignLeft
-                        onClicked: root.collection.toggleFavorite()
-                    }
-                    Button {
-                        visible: root.collection.kind === "album" ||
-                                 root.collection.kind === "playlist"
-                        text: "评论"
-                        onClicked: {
-                            const source = root.collection.source;
-                            root.commentsRequested(root.collection.kind,
-                                                   root.collection.kind === "playlist" ?
-                                                       source.globalId : source.id,
-                                                   root.collection.title);
-                        }
+                }
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: 8
+                Button {
+                    text: root.collection.kind === "artist" ? "播放热门歌曲" :
+                          root.collection.kind === "rank" ? "播放榜单" :
+                          root.collection.kind === "playlist" ? "播放全部" : "播放专辑"
+                    highlighted: true
+                    enabled: root.collection.tracks.length > 0
+                    onClicked: root.player.playCollection(root.collection.tracks, 0,
+                                                          root.collection.source)
+                }
+                Button {
+                    visible: root.collection.kind === "playlist"
+                    text: root.collection.favoriteBusy ? "处理中…" :
+                          root.collection.favorited ?
+                          (root.collection.canUnfavorite ? "取消收藏" : "已在音乐库") : "收藏歌单"
+                    enabled: !root.collection.favoriteBusy &&
+                             (!root.collection.favorited || root.collection.canUnfavorite)
+                    onClicked: root.collection.toggleFavorite()
+                }
+                Button {
+                    visible: root.collection.kind === "album" ||
+                             root.collection.kind === "playlist"
+                    text: "评论"
+                    onClicked: {
+                        const source = root.collection.source;
+                        root.commentsRequested(root.collection.kind,
+                                               root.collection.kind === "playlist" ?
+                                                   source.globalId : source.id,
+                                               root.collection.title);
                     }
                 }
             }
@@ -174,7 +189,7 @@ Page {
             onClicked: root.player.playCollection(root.collection.tracks, song.index,
                                                   root.collection.source)
             onAddToPlaylistRequested: track => root.addToPlaylistRequested(track)
-            onAlbumRequested: track => root.collection.openNestedAlbum(track, songs.contentY)
+            onAlbumRequested: track => root.collection.openNestedAlbum(track, root.scrollOffset())
         }
         footer: ColumnLayout {
             width: songs.width

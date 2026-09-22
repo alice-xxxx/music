@@ -29,17 +29,12 @@ Dialog {
         spacing: 10
         RowLayout {
             Layout.fillWidth: true
-            Label {
-                text: "歌曲、专辑或歌单的公开评论"
-                color: Theme.textSecondary
-                Layout.fillWidth: true
-            }
+            Item { Layout.fillWidth: true }
             Button {
                 text: "刷新"
                 enabled: !root.commentsViewModel.loading
                 onClicked: root.commentsViewModel.reload()
             }
-            ToolButton { text: "关闭"; onClicked: root.close() }
         }
         Label {
             visible: root.commentsViewModel.errorMessage.length > 0

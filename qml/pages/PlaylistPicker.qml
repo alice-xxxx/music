@@ -14,7 +14,7 @@ Dialog {
     anchors.centerIn: Overlay.overlay
     width: Math.min(440, Overlay.overlay.width - 32)
     height: Math.min(560, Overlay.overlay.height - 32)
-    standardButtons: Dialog.Close
+    standardButtons: Dialog.NoButton
     onOpened: root.library.load()
 
     Connections {

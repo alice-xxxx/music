@@ -11,7 +11,7 @@ Dialog {
 
     title: "连接酷狗账号"
     modal: true
-    standardButtons: Dialog.Close
+    standardButtons: Dialog.NoButton
     width: Math.min(380, Overlay.overlay.width - 32)
     height: Math.min(560, Overlay.overlay.height - 32)
     anchors.centerIn: Overlay.overlay

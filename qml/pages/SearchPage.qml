@@ -33,6 +33,11 @@ Page {
         cancelPendingSearch();
         searchViewModel.submitSearch();
     }
+    function submitQuery(query) {
+        cancelPendingSearch();
+        searchViewModel.query = query;
+        searchViewModel.submitSearch();
+    }
     property bool longWait: false
     property real entryScroll: 0
     property bool restoreEntryScroll: false
@@ -152,12 +157,7 @@ Page {
                         required property string modelData
                         text: modelData
                         flat: true
-                        onClicked: {
-                            debounce.stop();
-                            suggestionDebounce.stop();
-                            root.searchViewModel.query = modelData;
-                            root.searchViewModel.submitSearch();
-                        }
+                        onClicked: root.submitQuery(modelData)
                     }
                 }
             }
@@ -212,10 +212,7 @@ Page {
                 Button {
                     required property string modelData
                     text: modelData
-                    onClicked: {
-                        root.searchViewModel.query = modelData;
-                        root.searchViewModel.submitSearch();
-                    }
+                    onClicked: root.submitQuery(modelData)
                 }
             }
         }
@@ -237,10 +234,7 @@ Page {
                     required property string modelData
                     text: modelData
                     flat: true
-                    onClicked: {
-                        root.searchViewModel.query = modelData;
-                        root.searchViewModel.submitSearch();
-                    }
+                    onClicked: root.submitQuery(modelData)
                 }
             }
         }

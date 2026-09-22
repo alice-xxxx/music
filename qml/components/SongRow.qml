@@ -42,37 +42,15 @@ ItemDelegate {
     }
     contentItem: RowLayout {
         spacing: 12
-        CoverImage {
+        PlayingCover {
+            current: root.current
+            playing: root.playbackController.playing
             Layout.preferredWidth: 44
             Layout.preferredHeight: 44
             coverUrl: root.coverUrl
             entityName: root.title
             pixelSize: 100
             objectName: "songArtwork"
-            Rectangle {
-                objectName: "currentTrackIndicator"
-                anchors.fill: parent
-                visible: root.current
-                color: "#80000000"
-                radius: parent.radius
-                Accessible.role: Accessible.StaticText
-                Accessible.name: root.playbackController.playing ? "正在播放" : "当前歌曲，已暂停"
-                Row {
-                    anchors.centerIn: parent
-                    spacing: 3
-                    Repeater {
-                        model: root.playbackController.playing ? [9, 18, 13] : [14, 14]
-                        Rectangle {
-                            required property int modelData
-                            width: 3
-                            height: modelData
-                            anchors.verticalCenter: parent.verticalCenter
-                            radius: 1
-                            color: "#FFFFFF"
-                        }
-                    }
-                }
-            }
         }
         ColumnLayout {
             Layout.fillWidth: true

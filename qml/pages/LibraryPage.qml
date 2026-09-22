@@ -37,6 +37,9 @@ Page {
     property bool loaded: false
     property real playlistScrollY: 0
     readonly property bool detail: section === playlistsSection && libraryViewModel.title.length > 0
+    readonly property var displayedTracks: detail ? libraryViewModel.tracks :
+                                            section === favoritesSection ? favorites.tracks : playbackController.recentTracks
+    readonly property var playbackSource: detail ? libraryViewModel.source : ({ title: pageTitle, hasMore: false })
     readonly property bool songSection: detail || section !== playlistsSection
 
     onSectionChanged: if (section === favoritesSection && sessionManager.authenticated)
@@ -76,6 +79,7 @@ Page {
     background: Rectangle { color: Theme.background }
     ColumnLayout {
         anchors.top: parent.top
+        anchors.topMargin: root.showHeading ? 0 : 16
         anchors.bottom: parent.bottom
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width - (root.width < 600 ? 32 : 64), 1120)
@@ -113,6 +117,13 @@ Page {
         RowLayout {
             visible: root.section !== root.playlistsSection || root.detail
             Layout.fillWidth: true
+            Button {
+                text: "播放全部"
+                highlighted: true
+                visible: !root.detail && root.songSection
+                enabled: root.displayedTracks.length > 0
+                onClicked: root.playbackController.playCollection(root.displayedTracks, 0, root.playbackSource)
+            }
             Item { Layout.fillWidth: true }
             ToolButton {
                 visible: root.section === root.recentSection
@@ -320,9 +331,7 @@ Page {
             Layout.fillHeight: true
             clip: true
             spacing: 4
-            model: root.detail ? root.libraryViewModel.tracks :
-                   root.section === root.favoritesSection ?
-                                 root.favorites.tracks : root.playbackController.recentTracks
+            model: root.displayedTracks
             onContentYChanged: if (root.detail && flicking && contentY + height >
                                    contentHeight - 240) root.libraryViewModel.loadMore()
             delegate: SongRow {
@@ -339,10 +348,7 @@ Page {
                 coverUrl: modelData.coverUrl || ""
                 albumText: modelData.album || ""
                 removable: root.detail
-                onClicked: root.detail ? root.playbackController.playCollection(
-                                            root.libraryViewModel.tracks, songRow.index,
-                                            root.libraryViewModel.source) :
-                                        root.playbackController.playSong(modelData)
+                onClicked: root.playbackController.playCollection(root.displayedTracks, songRow.index, root.playbackSource)
                 onAlbumRequested: track => root.albumRequested(track)
                 onAddToPlaylistRequested: track => root.addToPlaylistRequested(track)
                 onRemoveRequested: root.libraryViewModel.removeTrack(songRow.index)

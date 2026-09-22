@@ -7,20 +7,24 @@ Item {
     id: root
     property bool fromRight: false
     property bool canceled: false
+    property real verticalDistance: 0
     readonly property real distance: drag.activeTranslation.x * (fromRight ? -1 : 1)
     signal backRequested()
-    width: 20
+    width: 16
     DragHandler {
         id: drag
         target: null
         xAxis.enabled: true
         yAxis.enabled: false
         dragThreshold: 24
+        onCentroidChanged: if (active)
+                               root.verticalDistance = Math.abs(centroid.scenePosition.y - centroid.scenePressPosition.y)
         onCanceled: root.canceled = true
         onActiveChanged: {
             if (active) {
                 root.canceled = false;
-            } else if (!root.canceled && root.enabled && root.distance >= 80) {
+                root.verticalDistance = 0;
+            } else if (!root.canceled && root.enabled && root.distance >= 80 && root.distance > root.verticalDistance * 2) {
                 root.backRequested();
             }
         }

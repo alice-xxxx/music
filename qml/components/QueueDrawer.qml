@@ -8,6 +8,8 @@ import "../theme"
 Drawer {
     id: root
     required property var player
+    dragMargin: 0
+    modal: true
     edge: parent && parent.width < 600 ? Qt.BottomEdge : Qt.RightEdge
     width: edge === Qt.RightEdge ? Math.min(parent.width, 400) : parent.width
     height: edge === Qt.BottomEdge ? Math.min(parent.height * 0.8, 640) : parent.height
@@ -32,7 +34,8 @@ Drawer {
                     color: Theme.textSecondary
                 }
             }
-            ToolButton {
+            IconButton {
+                symbol: "more"
                 text: "管理"
                 enabled: root.player.queueCount > 0
                 onClicked: queueActions.open()
@@ -44,7 +47,8 @@ Drawer {
                     }
                 }
             }
-            ToolButton {
+            IconButton {
+                symbol: "close"
                 text: "关闭"
                 onClicked: root.close()
             }
@@ -68,7 +72,9 @@ Drawer {
                 onClicked: root.player.playQueueIndex(queueRow.index)
                 contentItem: RowLayout {
                     spacing: 10
-                    CoverImage {
+                    PlayingCover {
+                        current: queueRow.highlighted
+                        playing: root.player.playing
                         entityName: queueRow.trackData.title
                         coverUrl: queueRow.trackData.coverUrl || ""
                         pixelSize: 100
@@ -85,14 +91,14 @@ Drawer {
                             color: queueRow.highlighted ? Theme.accent : Theme.textPrimary
                         }
                         Label {
-                            text: (queueRow.trackData.artist || "未知歌手") +
-                                  (queueRow.highlighted ? " · 当前歌曲" : "")
+                            text: queueRow.trackData.artist || "未知歌手"
                             color: queueRow.highlighted ? Theme.accent : Theme.textSecondary
                             elide: Text.ElideRight
                             Layout.fillWidth: true
                         }
                     }
-                    ToolButton {
+                    IconButton {
+                        symbol: "more"
                         text: "更多"
                         Accessible.name: queueRow.trackData.title + " 的队列操作"
                         onClicked: rowActions.open()
