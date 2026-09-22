@@ -38,6 +38,7 @@ void updateWindowsMediaIntegration(void *state, bool hasTrack, bool playing, qin
 void *createAppleMediaIntegration(BackgroundPlayback *owner);
 void destroyAppleMediaIntegration(void *state);
 bool setApplePlaybackActive(void *state, bool active);
+void beginApplePlaybackTransition(void *state);
 void updateAppleNowPlaying(void *state, bool hasTrack, bool desiredPlaying, bool playing,
                            qint64 position, qint64 duration, const QString &title,
                            const QString &artist);
@@ -248,9 +249,6 @@ void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing
                 "io/github/musicclient/app/PlaybackService", "setPlaybackActive",
                 "(Landroid/content/Context;Z)V", context.object<jobject>(),
                 static_cast<jboolean>(hasTrack));
-#elif defined(Q_OS_IOS) || defined(Q_OS_MACOS)
-        if (!setApplePlaybackActive(m_platformState, hasTrack) && hasTrack)
-            return;
 #endif
         m_active = hasTrack;
     }
@@ -296,6 +294,21 @@ void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing
     Q_UNUSED(duration);
     Q_UNUSED(title);
     Q_UNUSED(artist);
+#endif
+}
+
+void BackgroundPlayback::beginPlaybackTransition()
+{
+#if defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+    beginApplePlaybackTransition(m_platformState);
+#endif
+}
+
+void BackgroundPlayback::preparePlayback()
+{
+    beginPlaybackTransition();
+#if defined(Q_OS_IOS) || defined(Q_OS_MACOS)
+    setApplePlaybackActive(m_platformState, true);
 #endif
 }
 

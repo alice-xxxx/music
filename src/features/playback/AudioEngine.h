@@ -22,6 +22,7 @@ class AudioEngine final : public QObject
     void stop();
     void setPosition(qint64 position);
   signals:
+    void playbackStarting();
     void sourceReady();
     void positionChanged(qint64 position);
     void durationChanged(qint64 duration);

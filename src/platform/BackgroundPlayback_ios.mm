@@ -2,6 +2,8 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QDebug>
+#include <QTimer>
+#include <QElapsedTimer>
 #import <AVFoundation/AVFoundation.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <TargetConditionals.h>
@@ -15,6 +17,8 @@ namespace
 {
 template <typename Callback> void dispatch(BackgroundPlayback *owner, Callback callback)
 {
+    if (!owner)
+        return;
     QPointer<BackgroundPlayback> guard(owner);
     QMetaObject::invokeMethod(
         owner,
@@ -23,7 +27,7 @@ template <typename Callback> void dispatch(BackgroundPlayback *owner, Callback c
             if (guard)
                 callback(guard.data());
         },
-        Qt::QueuedConnection);
+        Qt::AutoConnection);
 }
 }
 
@@ -91,18 +95,66 @@ struct AppleMediaState
     qint64 duration = 0;
     QString title;
     QString artist;
+    QTimer *updateTimer = nullptr;
+    QElapsedTimer publishedAt;
+    qint64 publishedPosition = 0;
+    bool metadataDirty = true;
+#if TARGET_OS_IPHONE
+    bool sessionActive = false;
+    UIBackgroundTaskIdentifier transitionTask = UIBackgroundTaskInvalid;
+#endif
 };
+
+bool setApplePlaybackActive(void *opaque, bool active);
+
+void endApplePlaybackTransition(AppleMediaState *state)
+{
+#if TARGET_OS_IPHONE
+    if (state->transitionTask == UIBackgroundTaskInvalid)
+        return;
+    const auto task = state->transitionTask;
+    state->transitionTask = UIBackgroundTaskInvalid;
+    [[UIApplication sharedApplication] endBackgroundTask:task];
+#else
+    Q_UNUSED(state);
+#endif
+}
+
+void beginApplePlaybackTransition(void *opaque)
+{
+#if TARGET_OS_IPHONE
+    auto *state = static_cast<AppleMediaState *>(opaque);
+    if (!state || state->transitionTask != UIBackgroundTaskInvalid)
+        return;
+    // Audio background mode alone does not protect the silent interval while
+    // resolving a URL and buffering the next track. This lease is finite.
+    state->transitionTask = [[UIApplication sharedApplication]
+        beginBackgroundTaskWithName:@"Prepare next audio"
+        expirationHandler:^{
+            qWarning("Background audio preparation time expired");
+            endApplePlaybackTransition(state);
+        }];
+    state->updateTimer->start();
+#else
+    Q_UNUSED(opaque);
+#endif
+}
 
 void publishAppleNowPlaying(AppleMediaState *state)
 {
     MPRemoteCommandCenter *commands = [MPRemoteCommandCenter sharedCommandCenter];
-    commands.playCommand.enabled = state->hasTrack && !state->desiredPlaying;
-    commands.pauseCommand.enabled = state->hasTrack && state->desiredPlaying;
+    // Explicit play/pause requests are idempotent in the controller. Keep both
+    // enabled during buffering and interruptions, including headset commands.
+    commands.playCommand.enabled = state->hasTrack;
+    commands.pauseCommand.enabled = state->hasTrack;
     commands.togglePlayPauseCommand.enabled = state->hasTrack;
     commands.nextTrackCommand.enabled = state->hasTrack;
     commands.previousTrackCommand.enabled = state->hasTrack;
     commands.changePlaybackPositionCommand.enabled = state->hasTrack && state->duration > 0;
 
+    state->publishedPosition = state->position;
+    state->publishedAt.restart();
+    state->metadataDirty = false;
     MPNowPlayingInfoCenter *center = [MPNowPlayingInfoCenter defaultCenter];
     if (!state->hasTrack)
     {
@@ -133,6 +185,30 @@ void *createAppleMediaIntegration(BackgroundPlayback *owner)
     state->owner = owner;
     state->handler = [[MusicRemoteCommandHandler alloc] init];
     state->handler.owner = owner;
+    state->updateTimer = new QTimer(owner);
+    state->updateTimer->setSingleShot(true);
+    QObject::connect(state->updateTimer, &QTimer::timeout, owner, [state]
+    {
+#if TARGET_OS_IPHONE
+        if (!state->hasTrack && state->sessionActive)
+            setApplePlaybackActive(state, false);
+        else if (state->hasTrack && state->desiredPlaying && !state->sessionActive)
+            setApplePlaybackActive(state, true);
+#endif
+        // Coalesce stop/reset/start snapshots from a single track change.
+        // Wait for progress, not just PlayingState, before releasing the lease.
+        if (!state->hasTrack || !state->desiredPlaying ||
+            (state->playing && state->position > 0))
+            endApplePlaybackTransition(state);
+
+        const qint64 elapsed = state->publishedAt.isValid() ? state->publishedAt.elapsed() : 0;
+        const qint64 expected = state->publishedPosition + (state->playing ? elapsed : 0);
+        // The system extrapolates elapsed time; don't rebuild its metadata on
+        // every position tick. State changes and seeks still publish immediately.
+        if (state->metadataDirty || !state->publishedAt.isValid() || elapsed >= 5000 ||
+            qAbs(state->position - expected) > 1500)
+            publishAppleNowPlaying(state);
+    });
 
     MPRemoteCommandCenter *commands = [MPRemoteCommandCenter sharedCommandCenter];
     [commands.playCommand addTarget:state->handler action:@selector(play:)];
@@ -158,6 +234,7 @@ void *createAppleMediaIntegration(BackgroundPlayback *owner)
                 [info[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue]);
         if (type == AVAudioSessionInterruptionTypeBegan)
         {
+            state->sessionActive = false;
             dispatch(ownerGuard.data(), [](BackgroundPlayback *control)
                      { control->dispatchInterruptionBegan(true); });
             return;
@@ -191,6 +268,8 @@ void destroyAppleMediaIntegration(void *opaque)
     auto *state = static_cast<AppleMediaState *>(opaque);
     if (!state)
         return;
+    delete state->updateTimer;
+    endApplePlaybackTransition(state);
     MPRemoteCommandCenter *commands = [MPRemoteCommandCenter sharedCommandCenter];
     [commands.playCommand removeTarget:state->handler];
     [commands.pauseCommand removeTarget:state->handler];
@@ -214,11 +293,15 @@ void destroyAppleMediaIntegration(void *opaque)
 
 bool setApplePlaybackActive(void *opaque, bool active)
 {
-    Q_UNUSED(opaque);
 #if TARGET_OS_IPHONE
+    auto *state = static_cast<AppleMediaState *>(opaque);
+    if (!state)
+        return false;
     AVAudioSession *session = [AVAudioSession sharedInstance];
     NSError *error = nil;
-    if (active && ![session setCategory:AVAudioSessionCategoryPlayback
+    const bool categoryChanged = ![session.category isEqualToString:AVAudioSessionCategoryPlayback]
+        || ![session.mode isEqualToString:AVAudioSessionModeDefault] || session.categoryOptions != 0;
+    if (active && categoryChanged && ![session setCategory:AVAudioSessionCategoryPlayback
                                     mode:AVAudioSessionModeDefault
                                  options:0
                                    error:&error])
@@ -227,6 +310,9 @@ bool setApplePlaybackActive(void *opaque, bool active)
                  static_cast<long>(error.code));
         return false;
     }
+    // Screen locking must not reconfigure a healthy audio session.
+    if (state->sessionActive == active && !categoryChanged)
+        return true;
     const AVAudioSessionSetActiveOptions options = active
         ? static_cast<AVAudioSessionSetActiveOptions>(0)
         : AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation;
@@ -236,7 +322,9 @@ bool setApplePlaybackActive(void *opaque, bool active)
                  static_cast<long>(error.code));
         return false;
     }
+    state->sessionActive = active;
 #else
+    Q_UNUSED(opaque);
     Q_UNUSED(active);
 #endif
     return true;
@@ -249,6 +337,9 @@ void updateAppleNowPlaying(void *opaque, bool hasTrack, bool desiredPlaying, boo
     auto *state = static_cast<AppleMediaState *>(opaque);
     if (!state)
         return;
+    state->metadataDirty = state->metadataDirty || state->hasTrack != hasTrack
+        || state->desiredPlaying != desiredPlaying || state->playing != playing
+        || state->duration != duration || state->title != title || state->artist != artist;
     state->hasTrack = hasTrack;
     state->desiredPlaying = desiredPlaying;
     state->playing = playing;
@@ -256,7 +347,7 @@ void updateAppleNowPlaying(void *opaque, bool hasTrack, bool desiredPlaying, boo
     state->duration = duration;
     state->title = title;
     state->artist = artist;
-    publishAppleNowPlaying(state);
+    state->updateTimer->start();
 }
 
 void updateAppleNowPlayingArtwork(void *opaque, const QByteArray &data)
@@ -268,9 +359,10 @@ void updateAppleNowPlayingArtwork(void *opaque, const QByteArray &data)
     [state->artwork release];
 #endif
     state->artwork = nil;
+    state->metadataDirty = true;
     if (data.isEmpty())
     {
-        publishAppleNowPlaying(state);
+        state->updateTimer->start();
         return;
     }
 
@@ -292,5 +384,5 @@ void updateAppleNowPlayingArtwork(void *opaque, const QByteArray &data)
     [image release];
 #endif
 #endif
-    publishAppleNowPlaying(state);
+    state->updateTimer->start();
 }

@@ -20,6 +20,8 @@ class BackgroundPlayback final : public QObject
   public:
     explicit BackgroundPlayback(QObject *parent = nullptr);
     ~BackgroundPlayback();
+    void beginPlaybackTransition();
+    void preparePlayback();
     void update(bool hasTrack, bool desiredPlaying, bool playing, qint64 position,
                 qint64 duration, const QString &title, const QString &artist,
                 const QString &artworkUrl);

@@ -57,6 +57,8 @@ PlaybackController::PlaybackController(KuGouApi *api, CatalogService *catalog, L
     m_repeatMode = QSettings().value(QStringLiteral("playback/repeatMode"), 0).toInt();
     m_shuffle = QSettings().value(QStringLiteral("playback/shuffle"), false).toBool();
     m_player.setAudioOutput(m_audioOutput);
+    connect(&m_player, &AudioEngine::playbackStarting, this,
+            &PlaybackController::playbackStarting);
     connect(&m_player, &AudioEngine::sourceReady, this, &PlaybackController::prepareSourcePlayback);
     connect(&m_player, &AudioEngine::audioMetadataChanged, this,
             &PlaybackController::audioMetadataChanged);
@@ -712,13 +714,14 @@ void PlaybackController::setError(const QString &message)
 
 void PlaybackController::clearCurrentSource()
 {
+    // Acquire background execution time before the old audio output stops.
+    emit playbackTransitionStarted();
     m_recoveryTimer.stop();
     m_resumeDeadline.stop();
     m_recovering = false;
     m_waitingForSeek = false;
     m_desiredPlaying = false;
     m_resolving = false;
-    m_player.stop();
     m_player.setSource({});
 }
 

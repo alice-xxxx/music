@@ -129,6 +129,8 @@ class PlaybackController final : public QObject
     void resumeAfterInterruption(bool shouldResume);
     void pauseForOutputLoss();
   signals:
+    void playbackTransitionStarted();
+    void playbackStarting();
     void audioMetadataChanged();
     void storageErrorChanged();
     void undoChanged();

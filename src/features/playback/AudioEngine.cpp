@@ -159,6 +159,7 @@ QMediaPlayer::MediaStatus AudioEngine::mediaStatus() const
 }
 void AudioEngine::play()
 {
+    emit playbackStarting();
     m_player->play();
 }
 void AudioEngine::pause()

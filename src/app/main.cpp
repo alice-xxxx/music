@@ -62,6 +62,10 @@ int main(int argc, char *argv[])
                      QStringLiteral("/music.sqlite"));
     PlaybackController playbackController(&kugouApi, &catalog, &store);
     BackgroundPlayback backgroundPlayback;
+    QObject::connect(&playbackController, &PlaybackController::playbackTransitionStarted,
+                     &backgroundPlayback, &BackgroundPlayback::beginPlaybackTransition);
+    QObject::connect(&playbackController, &PlaybackController::playbackStarting,
+                     &backgroundPlayback, &BackgroundPlayback::preparePlayback);
     const auto synchronizeMediaSession = [&]
     {
         backgroundPlayback.update(
