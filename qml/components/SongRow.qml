@@ -82,37 +82,45 @@ ItemDelegate {
             color: Theme.textSecondary
         }
         IconButton {
+            id: moreButton
+            objectName: "songMoreButton"
+            property var actionMenu: actions
             symbol: "more"
             text: "更多"
             implicitWidth: 48
             implicitHeight: 48
-            onClicked: actions.open()
+            onClicked: actions.openAt(moreButton)
             Accessible.name: root.title + "的更多操作"
         }
     }
-    Menu {
+    ActionMenu {
         id: actions
-        MenuItem {
+        objectName: "songActionMenu"
+        ActionMenuItem {
             text: "下一首播放"
             onTriggered: root.playbackController.enqueueSong(root.trackData, true)
         }
-        MenuItem {
+        ActionMenuItem {
             text: "加入队列"
             onTriggered: root.playbackController.enqueueSong(root.trackData, false)
         }
-        MenuItem {
+        ActionMenuItem {
             text: "加入歌单"
             onTriggered: root.addToPlaylistRequested(root.trackData)
         }
-        MenuItem {
+        ActionMenuItem {
             text: "查看专辑"
-            enabled: !!root.trackData.albumId
+            visible: !!root.trackData.albumId
             onTriggered: root.albumRequested(root.trackData)
         }
-        MenuSeparator { visible: root.removable }
-        MenuItem {
+        MenuSeparator {
+            visible: root.removable
+            height: visible ? implicitHeight : 0
+        }
+        ActionMenuItem {
             visible: root.removable
             text: "从此歌单移除"
+            destructive: true
             onTriggered: root.removeRequested()
         }
     }

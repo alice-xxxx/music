@@ -126,13 +126,17 @@ Page {
             }
             Item { Layout.fillWidth: true }
             ToolButton {
+                id: historyButton
+                property var actionMenu: historyMenu
                 visible: root.section === root.recentSection
                 text: "管理"
-                onClicked: historyMenu.open()
-                Menu {
+                onClicked: historyMenu.openAt(historyButton)
+                ActionMenu {
                     id: historyMenu
-                    MenuItem {
+                    objectName: "historyActionMenu"
+                    ActionMenuItem {
                         text: "清除最近播放"
+                        destructive: true
                         enabled: root.playbackController.recentTracks.length > 0
                         onTriggered: clearHistoryDialog.open()
                     }
@@ -174,18 +178,22 @@ Page {
                     }
                 }
                 ToolButton {
+                    id: detailButton
+                    property var actionMenu: detailMenu
                     text: "管理"
-                    onClicked: detailMenu.open()
-                    Menu {
+                    onClicked: detailMenu.openAt(detailButton)
+                    ActionMenu {
                         id: detailMenu
-                        MenuItem {
+                        objectName: "detailActionMenu"
+                        ActionMenuItem {
                             text: "编辑歌单"
                             enabled: !root.libraryViewModel.actionBusy &&
                                      !root.libraryViewModel.actionUncertain
                             onTriggered: editDialog.open()
                         }
-                        MenuItem {
+                        ActionMenuItem {
                             text: "删除歌单"
+                            destructive: true
                             enabled: !root.libraryViewModel.actionBusy &&
                                      !root.libraryViewModel.actionUncertain
                             onTriggered: deleteDialog.open()
@@ -429,6 +437,7 @@ Page {
     }
     Dialog {
         id: editDialog
+        objectName: "editPlaylistDialog"
         title: "编辑歌单"
         modal: true
         anchors.centerIn: Overlay.overlay
@@ -477,6 +486,7 @@ Page {
     }
     Dialog {
         id: deleteDialog
+        objectName: "deletePlaylistDialog"
         title: "删除歌单"
         modal: true
         anchors.centerIn: Overlay.overlay
@@ -503,6 +513,7 @@ Page {
     }
     Dialog {
         id: clearHistoryDialog
+        objectName: "clearHistoryDialog"
         title: "清除最近播放"
         modal: true
         anchors.centerIn: Overlay.overlay

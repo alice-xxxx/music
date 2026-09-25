@@ -23,7 +23,7 @@ CoverImage {
                     required property int modelData
                     width: 3
                     height: modelData
-                    anchors.verticalCenter: parent.verticalCenter
+                    y: parent ? (parent.height - height) / 2 : 0
                     radius: 1
                     color: "#FFFFFF"
                 }

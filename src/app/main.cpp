@@ -70,7 +70,10 @@ int main(int argc, char *argv[])
     {
         backgroundPlayback.update(
             playbackController.hasCurrentTrack(), playbackController.desiredPlaying(),
-            playbackController.playing(), playbackController.position(),
+            playbackController.playing(), playbackController.preparing(),
+            !playbackController.errorMessage().isEmpty(), playbackController.seekable(),
+            playbackController.canSkipNext(), playbackController.canSkipPrevious(),
+            playbackController.position(),
             playbackController.duration(), playbackController.title(), playbackController.artist(),
             playbackController.coverUrl());
     };
@@ -81,6 +84,16 @@ int main(int argc, char *argv[])
     QObject::connect(&playbackController, &PlaybackController::durationChanged,
                      &backgroundPlayback, synchronizeMediaSession);
     QObject::connect(&playbackController, &PlaybackController::audioMetadataChanged,
+                     &backgroundPlayback, synchronizeMediaSession);
+    QObject::connect(&playbackController, &PlaybackController::seekableChanged,
+                     &backgroundPlayback, synchronizeMediaSession);
+    QObject::connect(&playbackController, &PlaybackController::errorChanged,
+                     &backgroundPlayback, synchronizeMediaSession);
+    QObject::connect(&playbackController, &PlaybackController::queueChanged,
+                     &backgroundPlayback, synchronizeMediaSession);
+    QObject::connect(&playbackController, &PlaybackController::repeatModeChanged,
+                     &backgroundPlayback, synchronizeMediaSession);
+    QObject::connect(&playbackController, &PlaybackController::shuffleChanged,
                      &backgroundPlayback, synchronizeMediaSession);
     QObject::connect(&backgroundPlayback, &BackgroundPlayback::playRequested,
                      &playbackController,

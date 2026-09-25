@@ -35,14 +35,19 @@ Drawer {
                 }
             }
             IconButton {
+                id: queueMoreButton
+                objectName: "queueMoreButton"
+                property var actionMenu: queueActions
                 symbol: "more"
                 text: "管理"
                 enabled: root.player.queueCount > 0
-                onClicked: queueActions.open()
-                Menu {
+                onClicked: queueActions.openAt(queueMoreButton)
+                ActionMenu {
                     id: queueActions
-                    MenuItem {
+                    objectName: "queueActionMenu"
+                    ActionMenuItem {
                         text: "清空播放队列"
+                        destructive: true
                         onTriggered: root.player.clearQueue()
                     }
                 }
@@ -98,26 +103,31 @@ Drawer {
                         }
                     }
                     IconButton {
+                        id: rowMoreButton
+                        objectName: "queueRowMoreButton"
+                        property var actionMenu: rowActions
                         symbol: "more"
                         text: "更多"
                         Accessible.name: queueRow.trackData.title + " 的队列操作"
-                        onClicked: rowActions.open()
-                        Menu {
+                        onClicked: rowActions.openAt(rowMoreButton)
+                        ActionMenu {
                             id: rowActions
-                            MenuItem {
+                            objectName: "queueRowActionMenu"
+                            ActionMenuItem {
                                 text: "上移"
                                 enabled: queueRow.index > 0
                                 onTriggered: root.player.moveQueueItem(queueRow.index,
                                                                         queueRow.index - 1)
                             }
-                            MenuItem {
+                            ActionMenuItem {
                                 text: "下移"
                                 enabled: queueRow.index + 1 < root.player.queueCount
                                 onTriggered: root.player.moveQueueItem(queueRow.index,
                                                                         queueRow.index + 1)
                             }
-                            MenuItem {
+                            ActionMenuItem {
                                 text: "从队列移除"
+                                destructive: true
                                 onTriggered: root.player.removeQueueIndex(queueRow.index)
                             }
                         }

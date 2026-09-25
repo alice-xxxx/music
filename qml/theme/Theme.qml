@@ -3,6 +3,7 @@ import QtQuick
 
 QtObject {
     property bool dark: false
+    property int openMenuCount: 0
     readonly property color background: dark ? "#141917" : "#F6F7F3"
     readonly property color surface: dark ? "#1D2420" : "#FFFFFF"
     readonly property color hoveredSurface: dark ? "#29372F" : "#EAF0E8"

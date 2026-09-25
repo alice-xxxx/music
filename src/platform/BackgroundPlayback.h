@@ -11,6 +11,15 @@
 class QNetworkAccessManager;
 class QNetworkReply;
 
+enum class MediaSessionState : int
+{
+    None = 0,
+    Paused = 1,
+    Buffering = 2,
+    Playing = 3,
+    Error = 4
+};
+
 class BackgroundPlayback final : public QObject
 #ifdef Q_OS_WIN
                                , public QAbstractNativeEventFilter
@@ -22,8 +31,10 @@ class BackgroundPlayback final : public QObject
     ~BackgroundPlayback();
     void beginPlaybackTransition();
     void preparePlayback();
-    void update(bool hasTrack, bool desiredPlaying, bool playing, qint64 position,
-                qint64 duration, const QString &title, const QString &artist,
+    void update(bool hasTrack, bool desiredPlaying, bool playing, bool buffering,
+                bool failed, bool seekable, bool canSkipNext, bool canSkipPrevious,
+                qint64 position, qint64 duration,
+                const QString &title, const QString &artist,
                 const QString &artworkUrl);
 
     void dispatchPlay();
@@ -54,7 +65,6 @@ class BackgroundPlayback final : public QObject
     void updateArtwork(const QString &artworkUrl);
     void publishArtwork();
 
-    bool m_active = false;
     void *m_platformState = nullptr;
     QNetworkAccessManager *m_artworkNetwork = nullptr;
     QPointer<QNetworkReply> m_artworkReply;

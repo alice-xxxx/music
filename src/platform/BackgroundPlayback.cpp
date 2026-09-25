@@ -40,6 +40,7 @@ void destroyAppleMediaIntegration(void *state);
 bool setApplePlaybackActive(void *state, bool active);
 void beginApplePlaybackTransition(void *state);
 void updateAppleNowPlaying(void *state, bool hasTrack, bool desiredPlaying, bool playing,
+                           bool seekable, bool canSkipNext, bool canSkipPrevious,
                            qint64 position, qint64 duration, const QString &title,
                            const QString &artist);
 void updateAppleNowPlayingArtwork(void *state, const QByteArray &data);
@@ -235,27 +236,23 @@ bool BackgroundPlayback::nativeEventFilter(const QByteArray &eventType, void *me
 }
 #endif
 
-void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing, qint64 position,
-                                qint64 duration, const QString &title, const QString &artist,
+void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing, bool buffering,
+                                bool failed, bool seekable, bool canSkipNext,
+                                bool canSkipPrevious, qint64 position, qint64 duration,
+                                const QString &title, const QString &artist,
                                 const QString &artworkUrl)
 {
+    const auto state = !hasTrack ? MediaSessionState::None
+                       : failed ? MediaSessionState::Error
+                       : !desiredPlaying ? MediaSessionState::Paused
+                       : buffering || !playing ? MediaSessionState::Buffering
+                                               : MediaSessionState::Playing;
+    const bool audible = state == MediaSessionState::Playing;
     updateArtwork(hasTrack ? artworkUrl : QString{});
-    if (m_active != hasTrack)
-    {
-#ifdef Q_OS_ANDROID
-        const QJniObject context = QNativeInterface::QAndroidApplication::context();
-        if (context.isValid())
-            QJniObject::callStaticMethod<void>(
-                "io/github/musicclient/app/PlaybackService", "setPlaybackActive",
-                "(Landroid/content/Context;Z)V", context.object<jobject>(),
-                static_cast<jboolean>(hasTrack));
-#endif
-        m_active = hasTrack;
-    }
 
 #ifdef Q_OS_WIN
 #ifdef MUSIC_APP_HAS_WINRT
-    updateWindowsMediaIntegration(m_platformState, hasTrack, playing, position, duration, title,
+    updateWindowsMediaIntegration(m_platformState, hasTrack, audible, position, duration, title,
                                   artist);
 #else
     Q_UNUSED(hasTrack);
@@ -265,6 +262,9 @@ void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing
     Q_UNUSED(duration);
     Q_UNUSED(title);
     Q_UNUSED(artist);
+    Q_UNUSED(seekable);
+    Q_UNUSED(canSkipNext);
+    Q_UNUSED(canSkipPrevious);
 #endif
 #elif defined(Q_OS_ANDROID)
     const QJniObject context = QNativeInterface::QAndroidApplication::context();
@@ -274,18 +274,23 @@ void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing
         const QJniObject javaArtist = QJniObject::fromString(artist);
         QJniObject::callStaticMethod<void>(
             "io/github/musicclient/app/PlaybackService", "updateSession",
-            "(Landroid/content/Context;ZZZJJLjava/lang/String;Ljava/lang/String;)V",
+            "(Landroid/content/Context;ZZIZZZJJLjava/lang/String;Ljava/lang/String;)V",
             context.object<jobject>(), static_cast<jboolean>(hasTrack),
-            static_cast<jboolean>(desiredPlaying), static_cast<jboolean>(playing),
+            static_cast<jboolean>(desiredPlaying), static_cast<jint>(state),
+            static_cast<jboolean>(seekable), static_cast<jboolean>(canSkipNext),
+            static_cast<jboolean>(canSkipPrevious),
             static_cast<jlong>(position), static_cast<jlong>(duration),
             javaTitle.object<jstring>(), javaArtist.object<jstring>());
     }
 #elif defined(Q_OS_IOS) || defined(Q_OS_MACOS)
-    updateAppleNowPlaying(m_platformState, hasTrack, desiredPlaying, playing, position, duration,
-                          title, artist);
+    updateAppleNowPlaying(m_platformState, hasTrack, desiredPlaying, audible, seekable,
+                          canSkipNext, canSkipPrevious, position, duration, title, artist);
 #elif defined(MUSIC_APP_HAS_DBUS)
-    updateLinuxMediaIntegration(m_platformState, hasTrack, playing, position, duration, title,
+    updateLinuxMediaIntegration(m_platformState, hasTrack, audible, position, duration, title,
                                 artist);
+    Q_UNUSED(seekable);
+    Q_UNUSED(canSkipNext);
+    Q_UNUSED(canSkipPrevious);
 #else
     Q_UNUSED(hasTrack);
     Q_UNUSED(desiredPlaying);
@@ -294,6 +299,9 @@ void BackgroundPlayback::update(bool hasTrack, bool desiredPlaying, bool playing
     Q_UNUSED(duration);
     Q_UNUSED(title);
     Q_UNUSED(artist);
+    Q_UNUSED(seekable);
+    Q_UNUSED(canSkipNext);
+    Q_UNUSED(canSkipPrevious);
 #endif
 }
 

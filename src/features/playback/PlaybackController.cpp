@@ -79,7 +79,6 @@ PlaybackController::PlaybackController(KuGouApi *api, CatalogService *catalog, L
             [this](QMediaPlayer::MediaStatus status)
             {
                 applyResumePosition();
-                emit snapshotChanged();
                 if (status == QMediaPlayer::EndOfMedia && m_desiredPlaying && !m_resolving &&
                     !m_recovering && m_errorMessage.isEmpty())
                 {
@@ -87,10 +86,13 @@ PlaybackController::PlaybackController(KuGouApi *api, CatalogService *catalog, L
                     {
                         m_player.setPosition(0);
                         m_player.play();
+                        emit snapshotChanged();
                     }
                     else
                         next();
                 }
+                else
+                    emit snapshotChanged();
             });
     connect(&m_player, &AudioEngine::errorOccurred, this, &PlaybackController::handlePlaybackError);
     connect(&m_player, &AudioEngine::outputDeviceChanged, this,
@@ -280,6 +282,29 @@ qint64 PlaybackController::duration() const
 bool PlaybackController::seekable() const
 {
     return m_player.isSeekable();
+}
+bool PlaybackController::canSkipNext() const
+{
+    if (m_currentIndex < 0 || m_currentIndex >= m_queue.size())
+        return false;
+    if (m_source.value("hasMore").toBool())
+        return true;
+    if (!m_shuffle)
+        return m_currentIndex + 1 < m_queue.size() || m_repeatMode == 1;
+    if (m_queue.size() < 2)
+        return m_repeatMode == 1;
+    if (m_repeatMode == 1)
+        return true;
+    for (int i = 0; i < m_queue.size(); ++i)
+        if (i != m_currentIndex && !m_shuffleRound.contains(m_queue.at(i).queueItemId))
+            return true;
+    return false;
+}
+bool PlaybackController::canSkipPrevious() const
+{
+    return m_currentIndex >= 0 && m_currentIndex < m_queue.size() &&
+           (m_player.position() > 0 || m_currentIndex > 0 ||
+            (m_shuffle && m_playedItemIds.size() > 1));
 }
 int PlaybackController::queueCount() const
 {
@@ -618,6 +643,7 @@ void PlaybackController::playIndex(int index)
 {
     if (index < 0 || index >= m_queue.size())
         return;
+    m_resumeAfterInterruption = false;
     const auto item = m_queue.at(index);
     const QUrl prefetchedMedia = item.queueItemId == m_prefetchedQueueItemId &&
                                         m_prefetchedQuality == m_requestedQuality
@@ -649,6 +675,9 @@ void PlaybackController::playIndex(int index)
 
     requestLyrics(item.track, m_generation);
     setError({});
+    // Publish the new track and intended playback before a prefetched source can
+    // call play() synchronously, so mobile media sessions can prepare first.
+    emit snapshotChanged();
     if (prefetchedMedia.isEmpty())
         resolveCurrentMedia();
     else
@@ -656,7 +685,6 @@ void PlaybackController::playIndex(int index)
         m_waitingForSeek = m_pendingSeek > 0;
         m_player.setSource(prefetchedMedia);
     }
-    emit snapshotChanged();
     if (m_currentIndex + 3 >= m_queue.size())
         loadCollectionPage();
 }
@@ -739,19 +767,21 @@ void PlaybackController::invalidateOnlineSession()
 
 QString PlaybackController::playbackStatus() const
 {
-    if (m_recovering)
-        return m_desiredPlaying ? QStringLiteral("连接中断，正在恢复播放…")
-                                : QStringLiteral("恢复准备中 · 已暂停");
-    if (m_resolving)
-        return m_desiredPlaying ? QStringLiteral("正在准备播放…")
-                                : QStringLiteral("准备中 · 已暂停");
+    if (!hasCurrentTrack())
+        return {};
     if (!m_errorMessage.isEmpty())
         return QStringLiteral("播放失败");
+    if (!m_desiredPlaying)
+        return QStringLiteral("已暂停");
+    if (m_recovering)
+        return QStringLiteral("连接中断，正在恢复播放…");
     if (m_player.mediaStatus() == QMediaPlayer::StalledMedia)
         return QStringLiteral("正在缓冲…");
+    if (preparing())
+        return QStringLiteral("正在准备播放…");
     if (playing())
         return QStringLiteral("正在播放");
-    return hasCurrentTrack() ? QStringLiteral("已暂停") : QString{};
+    return QStringLiteral("正在准备播放…");
 }
 QVariantList PlaybackController::recentTracks() const
 {

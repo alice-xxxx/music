@@ -103,11 +103,19 @@ class PlaybackController final : public QObject
     }
     bool preparing() const
     {
-        return m_resolving;
+        if (!m_desiredPlaying)
+            return false;
+        const auto status = m_player.mediaStatus();
+        return m_resolving || m_recovering || m_waitingForSeek ||
+               status == QMediaPlayer::StalledMedia ||
+               (!playing() && (status == QMediaPlayer::LoadingMedia ||
+                               status == QMediaPlayer::BufferingMedia));
     }
     qint64 position() const;
     qint64 duration() const;
     bool seekable() const;
+    bool canSkipNext() const;
+    bool canSkipPrevious() const;
     int queueCount() const;
     QString errorMessage() const;
     int volume() const;

@@ -91,6 +91,9 @@ struct AppleMediaState
     bool hasTrack = false;
     bool desiredPlaying = false;
     bool playing = false;
+    bool seekable = false;
+    bool canSkipNext = false;
+    bool canSkipPrevious = false;
     qint64 position = 0;
     qint64 duration = 0;
     QString title;
@@ -101,6 +104,7 @@ struct AppleMediaState
     bool metadataDirty = true;
 #if TARGET_OS_IPHONE
     bool sessionActive = false;
+    bool transitionProgress = false;
     UIBackgroundTaskIdentifier transitionTask = UIBackgroundTaskInvalid;
 #endif
 };
@@ -124,7 +128,10 @@ void beginApplePlaybackTransition(void *opaque)
 {
 #if TARGET_OS_IPHONE
     auto *state = static_cast<AppleMediaState *>(opaque);
-    if (!state || state->transitionTask != UIBackgroundTaskInvalid)
+    if (!state)
+        return;
+    state->transitionProgress = false;
+    if (state->transitionTask != UIBackgroundTaskInvalid)
         return;
     // Audio background mode alone does not protect the silent interval while
     // resolving a URL and buffering the next track. This lease is finite.
@@ -148,9 +155,10 @@ void publishAppleNowPlaying(AppleMediaState *state)
     commands.playCommand.enabled = state->hasTrack;
     commands.pauseCommand.enabled = state->hasTrack;
     commands.togglePlayPauseCommand.enabled = state->hasTrack;
-    commands.nextTrackCommand.enabled = state->hasTrack;
-    commands.previousTrackCommand.enabled = state->hasTrack;
-    commands.changePlaybackPositionCommand.enabled = state->hasTrack && state->duration > 0;
+    commands.nextTrackCommand.enabled = state->hasTrack && state->canSkipNext;
+    commands.previousTrackCommand.enabled = state->hasTrack && state->canSkipPrevious;
+    commands.changePlaybackPositionCommand.enabled = state->hasTrack && state->seekable &&
+        state->duration > 0;
 
     state->publishedPosition = state->position;
     state->publishedAt.restart();
@@ -174,8 +182,8 @@ void publishAppleNowPlaying(AppleMediaState *state)
     center.nowPlayingInfo = info;
 #if !TARGET_OS_IPHONE
     if (@available(macOS 10.12.2, *))
-        center.playbackState = state->desiredPlaying ? MPNowPlayingPlaybackStatePlaying
-                                                     : MPNowPlayingPlaybackStatePaused;
+        center.playbackState = state->playing ? MPNowPlayingPlaybackStatePlaying
+                                              : MPNowPlayingPlaybackStatePaused;
 #endif
 }
 
@@ -197,8 +205,7 @@ void *createAppleMediaIntegration(BackgroundPlayback *owner)
 #endif
         // Coalesce stop/reset/start snapshots from a single track change.
         // Wait for progress, not just PlayingState, before releasing the lease.
-        if (!state->hasTrack || !state->desiredPlaying ||
-            (state->playing && state->position > 0))
+        if (!state->hasTrack || !state->desiredPlaying || state->transitionProgress)
             endApplePlaybackTransition(state);
 
         const qint64 elapsed = state->publishedAt.isValid() ? state->publishedAt.elapsed() : 0;
@@ -258,6 +265,13 @@ void *createAppleMediaIntegration(BackgroundPlayback *owner)
         if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable)
             dispatch(ownerGuard.data(), [](BackgroundPlayback *control)
                      { control->dispatchOutputDisconnected(); });
+        else if (reason == AVAudioSessionRouteChangeReasonCategoryChange &&
+                 state->hasTrack && state->desiredPlaying)
+            QMetaObject::invokeMethod(ownerGuard.data(), [ownerGuard, state]
+            {
+                if (ownerGuard && state->hasTrack && state->desiredPlaying)
+                    setApplePlaybackActive(state, true);
+            }, Qt::QueuedConnection);
     }];
 #endif
     return state;
@@ -311,7 +325,8 @@ bool setApplePlaybackActive(void *opaque, bool active)
         return false;
     }
     // Screen locking must not reconfigure a healthy audio session.
-    if (state->sessionActive == active && !categoryChanged)
+    if ((!active && !state->sessionActive) ||
+        (active && state->sessionActive && !categoryChanged))
         return true;
     const AVAudioSessionSetActiveOptions options = active
         ? static_cast<AVAudioSessionSetActiveOptions>(0)
@@ -331,18 +346,29 @@ bool setApplePlaybackActive(void *opaque, bool active)
 }
 
 void updateAppleNowPlaying(void *opaque, bool hasTrack, bool desiredPlaying, bool playing,
+                           bool seekable, bool canSkipNext, bool canSkipPrevious,
                            qint64 position, qint64 duration, const QString &title,
                            const QString &artist)
 {
     auto *state = static_cast<AppleMediaState *>(opaque);
     if (!state)
         return;
+#if TARGET_OS_IPHONE
+    if (state->transitionTask != UIBackgroundTaskInvalid && playing && state->playing &&
+        position > state->position)
+        state->transitionProgress = true;
+#endif
     state->metadataDirty = state->metadataDirty || state->hasTrack != hasTrack
         || state->desiredPlaying != desiredPlaying || state->playing != playing
-        || state->duration != duration || state->title != title || state->artist != artist;
+        || state->seekable != seekable || state->canSkipNext != canSkipNext ||
+        state->canSkipPrevious != canSkipPrevious || state->duration != duration ||
+        state->title != title || state->artist != artist;
     state->hasTrack = hasTrack;
     state->desiredPlaying = desiredPlaying;
     state->playing = playing;
+    state->seekable = seekable;
+    state->canSkipNext = canSkipNext;
+    state->canSkipPrevious = canSkipPrevious;
     state->position = position;
     state->duration = duration;
     state->title = title;

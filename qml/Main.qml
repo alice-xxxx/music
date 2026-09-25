@@ -37,7 +37,8 @@ ApplicationWindow {
                                       (currentPage === libraryPage && libraryContent.canGoBack)
     readonly property bool modalOpen: loginDialog.opened || playlistPicker.opened ||
                                       commentsDialog.opened || queueDrawer.opened ||
-                                      libraryContent.modalOpen || settingsContent.modalOpen || playingMenu.opened
+                                      libraryContent.modalOpen || settingsContent.modalOpen ||
+                                      Theme.openMenuCount > 0
     readonly property bool typing: activeFocusItem instanceof TextInput
                                    || activeFocusItem instanceof TextEdit
     onCurrentPageChanged: if (currentPage !== settingsPage) appSettings.lastPage = currentPage
@@ -184,17 +185,17 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Space"
-        enabled: !window.typing && !loginDialog.opened && !playlistPicker.opened && !commentsDialog.opened
+        enabled: !window.typing && !window.modalOpen
         onActivated: window.playbackController.togglePlayback()
     }
     Shortcut {
         sequence: "Ctrl+Right"
-        enabled: !window.typing
+        enabled: !window.typing && !window.modalOpen
         onActivated: window.playbackController.next()
     }
     Shortcut {
         sequence: "Ctrl+Left"
-        enabled: !window.typing
+        enabled: !window.typing && !window.modalOpen
         onActivated: window.playbackController.previous()
     }
     LoginDialog {
@@ -311,7 +312,8 @@ ApplicationWindow {
                             window.collectionViewModel.kind === "album" ? "专辑" : "歌单") :
                        window.currentPage === window.homePage ? "发现" :
                        window.currentPage === window.libraryPage ? libraryContent.pageTitle : "设置"
-                moreVisible: window.overlayPage === window.nowPlayingOverlay
+                moreVisible: window.overlayPage === window.nowPlayingOverlay &&
+                             window.playbackController.hasCurrentTrack
                 onBackRequested: window.navigateBack()
                 onSearchStarted: window.searchActive = true
                 onQueryEdited: (query, composing) => {
@@ -322,12 +324,20 @@ ApplicationWindow {
                     searchContent.submit();
                     releaseSearchFocus();
                 }
-                onMoreRequested: playingMenu.open()
-                Menu {
+                onMoreRequested: anchor => {
+                    anchor.actionMenu = playingMenu;
+                    playingMenu.openAt(anchor);
+                }
+                ActionMenu {
                     id: playingMenu
-                    MenuItem {
+                    objectName: "playingActionMenu"
+                    ActionMenuItem {
+                        text: "加入歌单"
+                        onTriggered: window.requestAddTrack(window.playbackController.currentTrack)
+                    }
+                    ActionMenuItem {
                         text: "歌曲评论"
-                        enabled: !!window.playbackController.currentTrack.albumAudioId
+                        visible: !!window.playbackController.currentTrack.albumAudioId
                         onTriggered: window.openComments("song", window.playbackController.currentTrack.albumAudioId,
                                                         window.playbackController.title)
                     }

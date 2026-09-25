@@ -18,7 +18,7 @@ ToolBar {
     signal searchStarted()
     signal queryEdited(string query, bool composing)
     signal searchSubmitted()
-    signal moreRequested()
+    signal moreRequested(var anchor)
     function releaseSearchFocus() {
         searchField.focus = false;
         Qt.inputMethod.hide();
@@ -73,10 +73,13 @@ ToolBar {
             }
         }
         IconButton {
+            id: moreButton
+            objectName: "headerMoreButton"
+            property var actionMenu
             visible: root.moreVisible
             symbol: "more"
             text: "更多操作"
-            onClicked: root.moreRequested()
+            onClicked: root.moreRequested(moreButton)
         }
     }
 }

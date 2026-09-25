@@ -101,6 +101,8 @@ qt_add_qml_module(MusicApp
         qml/components/CoverImage.qml
         qml/components/PlayerBar.qml
         qml/components/SongRow.qml
+        qml/components/ActionMenu.qml
+        qml/components/ActionMenuItem.qml
         qml/components/QueueDrawer.qml
         qml/pages/PlaylistPicker.qml
         qml/pages/CollectionPage.qml

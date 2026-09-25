@@ -64,18 +64,20 @@ Page {
                 spacing: 4
                 Button {
                     id: artistLink
+                    property var actionMenu: artistMenu
                     text: root.player.artist || "歌手信息暂缺"
                     flat: true
                     Layout.fillWidth: true
                     Layout.preferredWidth: 1
                     Layout.minimumWidth: 0
                     enabled: (root.player.currentTrack.artists || []).length > 0
-                    onClicked: artistMenu.open()
-                    Menu {
+                    onClicked: artistMenu.openAt(artistLink)
+                    ActionMenu {
                         id: artistMenu
+                        objectName: "artistActionMenu"
                         Instantiator {
                             model: root.player.currentTrack.artists || []
-                            delegate: MenuItem {
+                            delegate: ActionMenuItem {
                                 required property var modelData
                                 text: modelData.name
                                 onTriggered: root.artistRequested(modelData)
