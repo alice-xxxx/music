@@ -36,10 +36,5 @@ Track Track::fromMap(const QVariantMap &map)
     track.coverUrl = map.value("coverUrl").toString();
     track.fileId = map.value("fileId").toString();
     track.durationMs = map.value("durationMs", -1).toLongLong();
-    if (track.hash.isEmpty() && track.key.startsWith("kugou:"))
-    {
-        track.hash = track.key.mid(6).section(':', 0, 0);
-        track.albumAudioId = track.key.mid(6).section(':', 1, 1);
-    }
     return track;
 }

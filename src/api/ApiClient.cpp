@@ -2,6 +2,8 @@
 #include "platform/CredentialCookieJar.h"
 
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QDebug>
 #include <QNetworkCookie>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -9,22 +11,6 @@
 #include <QScopeGuard>
 #include <QTimer>
 #include <memory>
-
-namespace
-{
-QString stringValue(const QJsonObject &object, std::initializer_list<const char *> keys)
-{
-    for (const char *key : keys)
-    {
-        const QJsonValue value = object.value(QLatin1String(key));
-        if (value.isString())
-            return value.toString();
-        if (value.isDouble())
-            return QString::number(value.toInteger());
-    }
-    return {};
-}
-} // namespace
 
 ApiClient::ApiClient(QUrl serviceBase, QObject *parent, bool persistentCookies)
     : QObject(parent), m_serviceBase(std::move(serviceBase)),
@@ -174,6 +160,35 @@ void ApiClient::request(QString path, Method method, QUrlQuery query, QByteArray
                 QJsonParseError parseError;
                 response.json = QJsonDocument::fromJson(response.body, &parseError);
                 const QJsonObject root = response.json.object();
+                if (qEnvironmentVariableIsSet("MUSIC_API_TRACE"))
+                {
+                    const QJsonValue dataValue = root.value(QStringLiteral("data"));
+                    const QJsonObject data = dataValue.toObject();
+                    QStringList rowKeys;
+                    QString dataType = QStringLiteral("missing");
+                    if (dataValue.isObject())
+                        dataType = QStringLiteral("object");
+                    else if (dataValue.isArray())
+                    {
+                        dataType = QStringLiteral("array");
+                        if (!dataValue.toArray().isEmpty())
+                            rowKeys = dataValue.toArray().first().toObject().keys();
+                    }
+                    else if (!dataValue.isUndefined())
+                        dataType = QStringLiteral("scalar");
+                    for (auto it = data.begin(); it != data.end(); ++it)
+                        if (it.value().isArray() && !it.value().toArray().isEmpty())
+                        {
+                            rowKeys = it.value().toArray().first().toObject().keys();
+                            break;
+                        }
+                    qInfo().noquote() << "api shape" << reply->property("endpointPath").toString()
+                                      << "http" << response.httpStatus
+                                      << "root" << root.keys().join(QLatin1Char(','))
+                                      << "dataType" << dataType
+                                      << "data" << data.keys().join(QLatin1Char(','))
+                                      << "row" << rowKeys.join(QLatin1Char(','));
+                }
                 if (reply->property("responseTooLarge").toBool())
                 {
                     response.errorCode = QStringLiteral("ResponseTooLarge");
@@ -192,7 +207,7 @@ void ApiClient::request(QString path, Method method, QUrlQuery query, QByteArray
                         response.errorCode = QStringLiteral("Timeout");
                     else
                         response.errorCode = QStringLiteral("Unavailable");
-                    response.errorMessage = stringValue(root, {"message", "error", "msg"});
+                    response.errorMessage = root.value(QStringLiteral("message")).toString();
                     if (response.errorMessage.isEmpty())
                     {
                         response.errorMessage = QStringLiteral("服务未返回可用数据");

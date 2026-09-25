@@ -196,7 +196,7 @@ PlaybackController::PlaybackController(KuGouApi *api, CatalogService *catalog, L
                                     continue;
                                 auto id = map.value("queueItemId").toString().toULongLong();
                                 if (id == 0 || restoredIds.contains(id))
-                                    id = ++m_nextQueueItemId;
+                                    continue;
                                 m_nextQueueItemId = qMax(m_nextQueueItemId, id);
                                 restoredIds.insert(id);
                                 m_queue.append({track, id});

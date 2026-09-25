@@ -79,7 +79,11 @@ Page {
                         elide: Text.ElideRight
                     }
                     Label {
-                        text: root.collection.tracks.length + (root.collection.hasMore ? "+ 首" : " 首")
+                        objectName: "collectionTrackCount"
+                        text: root.collection.errorMessage.length > 0 &&
+                              root.collection.tracks.length === 0 ? "加载失败" :
+                              root.collection.tracks.length +
+                              (root.collection.hasMore ? "+ 首" : " 首")
                         color: Theme.textSecondary
                         Layout.alignment: Qt.AlignLeft
                     }

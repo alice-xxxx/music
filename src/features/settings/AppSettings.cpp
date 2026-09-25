@@ -18,13 +18,6 @@ AppSettings::AppSettings(QObject *parent) : QObject(parent)
                                    "viper_clear", "viper_tape", "super"};
     if (qualities.contains(quality))
         m_preferredQuality = quality;
-    if (!settings.contains(QStringLiteral("navigation/version")))
-    {
-        if (settings.contains(QStringLiteral("navigation/page")))
-            settings.setValue(QStringLiteral("navigation/page"),
-                              qBound(0, settings.value(QStringLiteral("navigation/page")).toInt() + 1, 2));
-        settings.setValue(QStringLiteral("navigation/version"), 2);
-    }
     m_dataSaver = settings.value(QStringLiteral("playback/dataSaver"), false).toBool();
     m_themeMode =
         settings.value(QStringLiteral("appearance/theme"), QStringLiteral("system")).toString();

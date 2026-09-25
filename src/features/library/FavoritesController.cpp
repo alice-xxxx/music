@@ -7,8 +7,6 @@
 namespace
 {
 const QString favoriteName = QStringLiteral("音乐 · 喜欢的音乐");
-const QString legacyFavoriteName =
-    QStringLiteral("Ku") + QStringLiteral("Gou · 喜欢的音乐");
 }
 FavoritesController::FavoritesController(KuGouApi *api, SessionManager *session, QObject *parent)
     : QObject(parent), m_api(api), m_session(session)
@@ -134,8 +132,7 @@ void FavoritesController::discover(int page, bool afterCreate)
                 return;
             }
             for (const auto &playlist : rows)
-                if ((playlist.title == favoriteName || playlist.title == legacyFavoriteName) &&
-                    !playlist.listId.isEmpty())
+                if (playlist.title == favoriteName && !playlist.listId.isEmpty())
                 {
                     m_listId = playlist.listId;
                     m_creationPending = false;
