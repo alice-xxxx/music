@@ -366,8 +366,8 @@ void CollectionViewModel::request(int page)
     m_error.clear();
     emit changed();
     const auto generation = m_generation;
-    auto callback = [this, guard = QPointer<CollectionViewModel>(this), generation,
-                     page](QList<Track> rows, QString code, QString message)
+    auto pageCallback = [this, guard = QPointer<CollectionViewModel>(this), generation,
+                         page](QList<Track> rows, QString code, QString message, bool hasMore)
     {
         if (!guard || generation != m_generation)
             return;
@@ -379,7 +379,7 @@ void CollectionViewModel::request(int page)
             return;
         }
         m_page = page;
-        m_hasMore = rows.size() == 30;
+        m_hasMore = hasMore;
         if (!rows.isEmpty() && m_kind == QStringLiteral("album"))
         {
             m_title = rows.first().album;
@@ -389,12 +389,17 @@ void CollectionViewModel::request(int page)
             m_tracks.append(m_catalog->remember(track).toMap());
         emit changed();
     };
+    auto callback = [pageCallback](QList<Track> rows, QString code, QString message) mutable
+    {
+        const bool hasMore = rows.size() == 30;
+        pageCallback(std::move(rows), std::move(code), std::move(message), hasMore);
+    };
     if (m_kind == QStringLiteral("artist"))
         m_api->artistTracks(m_id, callback, page);
     else if (m_kind == QStringLiteral("rank"))
         m_api->rankTracks(m_id, callback, page);
     else if (m_kind == QStringLiteral("playlist"))
-        m_api->playlistTracks(m_id, {}, callback, page);
+        m_api->playlistTracks(m_id, {}, pageCallback, page);
     else
         m_api->albumTracks(m_id, callback, page);
 }

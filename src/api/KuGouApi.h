@@ -11,6 +11,7 @@ class KuGouApi final : public QObject
     Q_OBJECT
   public:
     using SearchCallback = std::function<void(QList<Track>, QString, QString)>;
+    using TrackPageCallback = std::function<void(QList<Track>, QString, QString, bool)>;
     struct Playlist
     {
         QString globalCollectionId;
@@ -66,7 +67,7 @@ class KuGouApi final : public QObject
     void userPlaylists(std::function<void(QList<Playlist>, QString, QString)> callback,
                        int page = 1);
     void playlistTracks(const QString &globalCollectionId, const QString &listId,
-                        SearchCallback callback, int page = 1);
+                        TrackPageCallback callback, int page = 1);
     void playlistDetail(const QString &globalCollectionId,
                         std::function<void(QVariantMap, QString)> callback);
     using WriteCallback = std::function<void(QString, QString)>;

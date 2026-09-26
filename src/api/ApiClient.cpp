@@ -184,6 +184,8 @@ void ApiClient::request(QString path, Method method, QUrlQuery query, QByteArray
                         }
                     qInfo().noquote() << "api shape" << reply->property("endpointPath").toString()
                                       << "http" << response.httpStatus
+                                      << "status" << root.value(QStringLiteral("status")).toVariant().toString()
+                                      << "errorCode" << root.value(QStringLiteral("error_code")).toVariant().toString()
                                       << "root" << root.keys().join(QLatin1Char(','))
                                       << "dataType" << dataType
                                       << "data" << data.keys().join(QLatin1Char(','))

@@ -971,7 +971,7 @@ void PlaybackController::loadCollectionPage(bool advance)
     m_sourceLoading = true;
     const auto generation = m_sourceGeneration;
     auto callback = [this, guard = QPointer<PlaybackController>(this),
-                     generation](QList<Track> tracks, QString code, QString message)
+                     generation](QList<Track> tracks, QString code, QString message, bool hasMore)
     {
         if (!guard || generation != m_sourceGeneration)
             return;
@@ -987,7 +987,7 @@ void PlaybackController::loadCollectionPage(bool advance)
             }
             return;
         }
-        m_source["hasMore"] = tracks.size() == 30;
+        m_source["hasMore"] = hasMore;
         m_source["nextPage"] = m_source.value("nextPage").toInt() + 1;
         const int nextIndex = m_queue.size();
         invalidatePrefetch();
@@ -1026,15 +1026,20 @@ void PlaybackController::loadCollectionPage(bool advance)
             }
         }
     };
+    auto simpleCallback = [callback](QList<Track> tracks, QString code, QString message)
+    {
+        const bool hasMore = tracks.size() == 30;
+        callback(std::move(tracks), std::move(code), std::move(message), hasMore);
+    };
     const auto kind = m_source.value("kind").toString();
     const auto id = m_source.value("id").toString();
     const int page = m_source.value("nextPage", 2).toInt();
     if (kind == QStringLiteral("album"))
-        m_api->albumTracks(id, callback, page);
+        m_api->albumTracks(id, simpleCallback, page);
     else if (kind == QStringLiteral("artist"))
-        m_api->artistTracks(id, callback, page);
+        m_api->artistTracks(id, simpleCallback, page);
     else if (kind == QStringLiteral("rank"))
-        m_api->rankTracks(id, callback, page);
+        m_api->rankTracks(id, simpleCallback, page);
     else
         m_api->playlistTracks(m_source.value("globalId").toString(), id, callback, page);
 }

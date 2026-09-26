@@ -5,7 +5,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QDebug>
 #include <QUrlQuery>
 
 namespace
@@ -25,7 +24,7 @@ EndpointError endpointError(const ApiClient::Response &response, bool searchEndp
     const bool failed = businessCode != 0 || root.value(QStringLiteral("status")).toInt(1) == 0;
     if (failed)
     {
-        QString message = stringField(root, {"message"});
+        QString message = stringField(root, {"error_msg", "errmsg", "message", "error", "msg"});
         if (message.isEmpty())
             message = QStringLiteral("服务业务错误 %1").arg(businessCode);
         return {searchEndpoint && businessCode == 152 ? QStringLiteral("AuthRequired")
@@ -60,45 +59,66 @@ QString normalizedCover(QString cover)
                ? url.toString().replace(QStringLiteral("%7Bsize%7D"), QStringLiteral("{size}"))
                : QString{};
 }
-QStringList keywordsFromRows(const QJsonValue &rowsValue, const char *field)
-{
-    QStringList keywords;
-    if (!rowsValue.isArray())
-        return keywords;
-    for (const auto &value : rowsValue.toArray())
-    {
-        const QString candidate = value.toObject().value(QLatin1String(field)).toString().trimmed();
-        if (!candidate.isEmpty() && candidate.size() <= 80 && !keywords.contains(candidate))
-            keywords.append(candidate);
-        if (keywords.size() == 20)
-            break;
-    }
-    return keywords;
-}
-enum class TrackFormat { Search, Ocean };
-QList<Track> parseTracks(const QJsonArray &rows, TrackFormat format)
+enum class TrackShape { Search, Daily, Rank, Playlist, Album };
+
+QList<Track> parseTracks(const QJsonArray &rows, TrackShape shape)
 {
     QList<Track> tracks;
     for (const auto &value : rows)
     {
+        if (!value.isObject())
+            return {};
         const auto row = value.toObject();
+        if (shape == TrackShape::Playlist && row.contains(QStringLiteral("shield")) &&
+            !row.contains(QStringLiteral("hash")))
+            continue;
+        const auto audio = row.value(QStringLiteral("audio_info")).toObject();
+        const auto base = row.value(QStringLiteral("base")).toObject();
+        const auto album = row.value(QStringLiteral("album_info")).toObject();
         Track track;
-        if (format == TrackFormat::Search)
+        switch (shape)
         {
+        case TrackShape::Search:
             track.hash = stringField(row, {"FileHash"});
             track.albumAudioId = stringField(row, {"MixSongID"});
-            track.title = stringField(row, {"SongName"});
+            track.title = stringField(row, {"OriSongName"});
             track.artist = stringField(row, {"SingerName"});
             track.albumId = stringField(row, {"AlbumID"});
             track.album = stringField(row, {"AlbumName"});
             track.coverUrl = normalizedCover(stringField(row, {"Image"}));
             track.durationMs = row.value(QStringLiteral("Duration")).toInteger(-1) * 1000;
-        }
-        else
-        {
-            const auto base = row.value(QStringLiteral("base")).toObject();
-            const auto audio = row.value(QStringLiteral("audio_info")).toObject();
-            const auto album = row.value(QStringLiteral("album_info")).toObject();
+            break;
+        case TrackShape::Daily:
+            track.hash = stringField(row, {"hash_128"});
+            track.albumAudioId = stringField(row, {"album_audio_id"});
+            track.title = stringField(row, {"songname"});
+            track.artist = stringField(row, {"author_name"});
+            track.albumId = stringField(row, {"album_id"});
+            track.album = stringField(row, {"album_name"});
+            track.coverUrl = normalizedCover(stringField(row, {"sizable_cover"}));
+            track.durationMs = row.value(QStringLiteral("time_length")).toInteger(-1) * 1000;
+            break;
+        case TrackShape::Rank:
+            track.hash = stringField(audio, {"hash_128"});
+            track.albumAudioId = stringField(row, {"album_audio_id"});
+            track.title = stringField(row, {"songname"});
+            track.artist = stringField(row, {"author_name"});
+            track.albumId = stringField(row, {"album_id"});
+            track.album = stringField(album, {"album_name"});
+            track.coverUrl = normalizedCover(stringField(album, {"sizable_cover"}));
+            track.durationMs = audio.value(QStringLiteral("duration_128")).toInteger(-1);
+            break;
+        case TrackShape::Playlist:
+            track.hash = stringField(row, {"hash"});
+            track.albumAudioId = stringField(row, {"mixsongid"});
+            track.title = stringField(row, {"name"});
+            track.fileId = stringField(row, {"fileid"});
+            track.albumId = stringField(row, {"album_id"});
+            track.album = stringField(row.value(QStringLiteral("albuminfo")).toObject(), {"name"});
+            track.coverUrl = normalizedCover(stringField(row, {"cover"}));
+            track.durationMs = row.value(QStringLiteral("timelen")).toInteger(-1);
+            break;
+        case TrackShape::Album:
             track.hash = stringField(audio, {"hash_128"});
             track.albumAudioId = stringField(base, {"album_audio_id"});
             track.title = stringField(base, {"audio_name"});
@@ -106,43 +126,60 @@ QList<Track> parseTracks(const QJsonArray &rows, TrackFormat format)
             track.albumId = stringField(base, {"album_id"});
             track.album = stringField(album, {"album_name"});
             track.coverUrl = normalizedCover(stringField(album, {"cover"}));
-            track.durationMs = audio.value(QStringLiteral("duration")).toInteger(-1);
-            for (const auto &authorValue : row.value(QStringLiteral("authors")).toArray())
-            {
-                const auto author = authorValue.toObject().value(QStringLiteral("base")).toObject();
-                const auto id = stringField(author, {"author_id"});
-                const auto name = stringField(author, {"author_name"});
-                if (!id.isEmpty() && !name.isEmpty())
-                    track.artists.append(QVariantMap{{"id", id}, {"name", name}});
-            }
+            track.durationMs = audio.value(QStringLiteral("duration_128")).toInteger(-1);
+            break;
         }
         if (track.hash.isEmpty() || track.title.isEmpty())
-            continue;
+            return {};
+        const char *singersKey = shape == TrackShape::Search ? "Singers" :
+                                 shape == TrackShape::Rank || shape == TrackShape::Album ? "authors" : "singerinfo";
+        for (const auto &singerValue : row.value(QLatin1String(singersKey)).toArray())
+        {
+            const auto singer = singerValue.toObject();
+            const auto id = shape == TrackShape::Rank || shape == TrackShape::Album
+                                ? stringField(singer, {"author_id"}) : stringField(singer, {"id"});
+            const auto name = shape == TrackShape::Rank || shape == TrackShape::Album
+                                  ? stringField(singer, {"author_name"}) : stringField(singer, {"name"});
+            if (!id.isEmpty() && !name.isEmpty())
+                track.artists.append(QVariantMap{{"id", id}, {"name", name}});
+        }
+        if (shape == TrackShape::Playlist)
+        {
+            QStringList names;
+            for (const auto &artist : track.artists)
+                names.append(artist.toMap().value(QStringLiteral("name")).toString());
+            track.artist = names.join(QStringLiteral("、"));
+            const auto prefix = track.artist + QStringLiteral(" - ");
+            if (!track.artist.isEmpty() && track.title.startsWith(prefix))
+                track.title.remove(0, prefix.size());
+        }
         track.key = QStringLiteral("kugou:") + track.hash + QLatin1Char(':') + track.albumAudioId;
-        track.fileId = stringField(row, {"fileid"});
-        tracks.append(std::move(track));
+        tracks.append(track);
     }
     return tracks;
 }
 QUrl mediaUrl(const ApiClient::Response &response)
 {
-    const auto urls = response.json.object().value(QStringLiteral("url"));
-    if (!urls.isArray() || urls.toArray().isEmpty() || !urls.toArray().first().isString())
-        return {};
-    QUrl url(urls.toArray().first().toString());
-    if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty() ||
-        (url.scheme() != QStringLiteral("https") && url.scheme() != QStringLiteral("http")))
-        return {};
-    return url;
+    const auto root = response.json.object();
+    for (const char *key : {"url", "backupUrl"})
+        for (const auto &candidate : root.value(QLatin1String(key)).toArray())
+        {
+            const QUrl url(candidate.toString());
+            if (url.isValid() && !url.host().isEmpty() && url.userInfo().isEmpty() &&
+                (url.scheme() == QStringLiteral("https") || url.scheme() == QStringLiteral("http")))
+                return url;
+        }
+    return {};
 }
-QVariantMap playlistEntry(const QJsonObject &row)
+QVariantMap playlistEntry(const QJsonObject &row, bool detail)
 {
     const QString id = stringField(row, {"global_collection_id"});
-    const QString title = stringField(row, {"specialname"});
+    const QString title = detail ? stringField(row, {"name"}) : stringField(row, {"specialname"});
     if (id.isEmpty() || title.isEmpty())
         return {};
-    const QString cover = normalizedCover(stringField(row, {"img"}));
-    return {{"kind", "playlist"},
+    const QString cover = normalizedCover(detail ? stringField(row, {"pic"})
+                                                : stringField(row, {"imgurl"}));
+    QVariantMap entry{{"kind", "playlist"},
             {"id", id},
             {"globalId", id},
             {"title", title},
@@ -151,36 +188,27 @@ QVariantMap playlistEntry(const QJsonObject &row)
             {"description", stringField(row, {"intro"})},
             {"coverUrl", cover},
             {"cover", cover},
-            {"count", stringField(row, {"song_count"}).toInt()},
             {"creatorUserId", stringField(row, {"list_create_userid"})},
             {"creatorListId", stringField(row, {"list_create_listid"})},
             {"creatorGid", stringField(row, {"list_create_gid"})}};
-}
-
-QJsonArray commentRows(const QJsonObject &root, bool *found)
-{
-    const auto rows = root.value(QStringLiteral("data"))
-                          .toObject().value(QStringLiteral("comments"));
-    *found = rows.isArray();
-    return rows.toArray();
+    if (detail)
+        entry.insert(QStringLiteral("count"), row.value(QStringLiteral("count")).toInt());
+    return entry;
 }
 
 QVariantMap commentEntry(const QJsonObject &row)
 {
-    const auto userInfo = row.value(QStringLiteral("user")).toObject();
     const auto content = stringField(row, {"content"}).trimmed();
     if (content.isEmpty())
         return {};
-    QString author = stringField(row, {"nickname"});
-    if (author.isEmpty())
-        author = stringField(userInfo, {"nickname"});
+    QString author = stringField(row, {"user_name"});
     if (author.isEmpty())
         author = QStringLiteral("酷狗用户");
     return {{"id", stringField(row, {"id"})},
             {"author", author},
             {"content", content},
             {"time", stringField(row, {"addtime"})},
-            {"likes", stringField(row, {"like_count"})}};
+            {"likes", stringField(row, {"like"})}};
 }
 
 } // namespace
@@ -245,7 +273,7 @@ void KuGouApi::search(const QString &keywords, SearchCallback callback, int page
                                   QStringLiteral("搜索响应缺少歌曲列表"));
                          return;
                      }
-                     const auto tracks = parseTracks(rows.toArray(), TrackFormat::Search);
+                     const auto tracks = parseTracks(rows.toArray(), TrackShape::Search);
                      if (tracks.size() != rows.toArray().size())
                      {
                          callback({}, QStringLiteral("SchemaMismatch"),
@@ -368,9 +396,9 @@ void KuGouApi::resolveSongAfterRegistration(const QString &hash, const QString &
         query.addQueryItem(QStringLiteral("album_audio_id"), albumAudioId);
 
     auto completion = std::make_shared<std::function<void(QUrl, QString)>>(std::move(callback));
-    auto requestUrl = [this, query, completion](const QString &endpoint)
+    auto requestPublicUrl = [this, query, completion]()
     {
-        m_client.get(endpoint, query,
+        m_client.get(QStringLiteral("/song/url"), query,
                      [completion](ApiClient::Response response)
                      {
                          if (const auto error = endpointError(response); !error.code.isEmpty())
@@ -384,26 +412,39 @@ void KuGouApi::resolveSongAfterRegistration(const QString &hash, const QString &
                                                 : QString{});
                      });
     };
+    auto requestAuthenticatedUrl = [this, query, completion, requestPublicUrl]()
+    {
+        m_client.get(QStringLiteral("/song/url/auth/merge"), query,
+                     [completion, requestPublicUrl](ApiClient::Response response)
+                     {
+                         const auto error = endpointError(response);
+                         const QUrl url = error.code.isEmpty() ? mediaUrl(response) : QUrl{};
+                         if (!url.isEmpty())
+                             (*completion)(url, {});
+                         else
+                             requestPublicUrl();
+                     });
+    };
     if (!authenticated())
     {
-        requestUrl(QStringLiteral("/song/url"));
+        requestPublicUrl();
         return;
     }
     if (m_userAuthAttempted)
     {
-        requestUrl(QStringLiteral("/song/url/auth/merge"));
+        requestAuthenticatedUrl();
         return;
     }
     m_client.get(QStringLiteral("/user/verify"), {},
-                 [this, requestUrl, completion](ApiClient::Response response)
+                 [this, requestAuthenticatedUrl, requestPublicUrl](ApiClient::Response response)
                  {
                      if (const auto error = endpointError(response); !error.code.isEmpty())
                      {
-                         (*completion)({}, error.message);
+                         requestPublicUrl();
                          return;
                      }
                      m_userAuthAttempted = true;
-                     requestUrl(QStringLiteral("/song/url/auth/merge"));
+                     requestAuthenticatedUrl();
                  });
 }
 
@@ -488,9 +529,23 @@ void KuGouApi::hotSearches(std::function<void(QStringList, QString)> callback)
                          callback({}, error.message);
                          return;
                      }
-                     const auto rows = response.json.object().value(QStringLiteral("data"))
-                                           .toObject().value(QStringLiteral("info"));
-                     const QStringList keywords = keywordsFromRows(rows, "keyword");
+                     const auto groups = response.json.object().value(QStringLiteral("data"))
+                                             .toObject().value(QStringLiteral("list"));
+                     if (!groups.isArray())
+                     {
+                         callback({}, QStringLiteral("热搜响应缺少列表"));
+                         return;
+                     }
+                     QStringList keywords;
+                     for (const auto &group : groups.toArray())
+                         for (const auto &item : group.toObject().value(QStringLiteral("keywords")).toArray())
+                         {
+                             const auto keyword = item.toObject().value(QStringLiteral("keyword")).toString().trimmed();
+                             if (!keyword.isEmpty() && !keywords.contains(keyword))
+                                 keywords.append(keyword);
+                             if (keywords.size() >= 20)
+                                 break;
+                         }
                      callback(keywords, keywords.isEmpty() ? QStringLiteral("热搜响应缺少关键词")
                                                           : QString{});
                  });
@@ -517,14 +572,21 @@ void KuGouApi::searchSuggestions(const QString &keywords,
                          callback({}, error.message);
                          return;
                      }
-                     const auto rows = response.json.object().value(QStringLiteral("data"))
-                                           .toObject().value(QStringLiteral("MusicTip"));
-                     if (!rows.isArray())
+                     const auto groups = response.json.object().value(QStringLiteral("data"));
+                     if (!groups.isArray())
                      {
-                         callback({}, QStringLiteral("搜索建议响应缺少 data.MusicTip"));
+                         callback({}, QStringLiteral("搜索建议响应缺少列表"));
                          return;
                      }
-                     callback(keywordsFromRows(rows, "HintInfo"), {});
+                     QStringList suggestions;
+                     for (const auto &group : groups.toArray())
+                         for (const auto &item : group.toObject().value(QStringLiteral("RecordDatas")).toArray())
+                         {
+                             const auto hint = item.toObject().value(QStringLiteral("HintInfo")).toString().trimmed();
+                             if (!hint.isEmpty() && !suggestions.contains(hint))
+                                 suggestions.append(hint);
+                         }
+                     callback(suggestions, {});
                  });
 }
 void KuGouApi::dailyRecommendations(SearchCallback callback, bool fresh)
@@ -542,15 +604,15 @@ void KuGouApi::dailyRecommendations(SearchCallback callback, bool fresh)
                          return;
                      }
                      const auto root = response.json.object();
-                     const auto rows = root.value(QStringLiteral("data"))
-                                           .toObject().value(QStringLiteral("songs"));
+                     const auto rows = root.value(QStringLiteral("data")).toObject()
+                                           .value(QStringLiteral("song_list"));
                      if (!rows.isArray())
                      {
                          callback({}, QStringLiteral("SchemaMismatch"),
-                                  QStringLiteral("每日推荐响应缺少 data.songs"));
+                                  QStringLiteral("每日推荐响应缺少歌曲列表"));
                          return;
                      }
-                     const auto tracks = parseTracks(rows.toArray(), TrackFormat::Ocean);
+                     const auto tracks = parseTracks(rows.toArray(), TrackShape::Daily);
                      if (tracks.size() != rows.toArray().size())
                      {
                          callback({}, QStringLiteral("SchemaMismatch"),
@@ -573,23 +635,22 @@ void KuGouApi::rankEntries(std::function<void(QVariantList, QString)> callback)
                          return;
                      }
                      const auto root = response.json.object();
-                     const auto rows = root.value(QStringLiteral("data"))
-                                           .toObject().value(QStringLiteral("rank_list"));
+                     const auto rows = root.value(QStringLiteral("data")).toObject()
+                                           .value(QStringLiteral("info"));
                      if (!rows.isArray())
                      {
-                         callback({}, QStringLiteral("排行榜响应缺少 data.rank_list"));
+                         callback({}, QStringLiteral("排行榜响应缺少列表"));
                          return;
                      }
                      QVariantList entries;
                      for (const auto &value : rows.toArray())
                      {
                          const auto row = value.toObject();
-                         const QString id = stringField(row, {"rankid"});
-                         const QString title = stringField(row, {"rankname"});
-                         const QString cover = stringField(row, {"imgurl"});
+                         const auto id = stringField(row, {"rankid"});
+                         const auto title = stringField(row, {"rankname"});
                          if (id.isEmpty() || title.isEmpty())
                          {
-                             callback({}, QStringLiteral("排行榜条目缺少 ID 或标题"));
+                             callback({}, QStringLiteral("排行榜缺少有效 ID 或标题"));
                              return;
                          }
                          entries.append(QVariantMap{
@@ -598,9 +659,10 @@ void KuGouApi::rankEntries(std::function<void(QVariantList, QString)> callback)
                              {"title", title},
                              {"name", title},
                              {"subtitle", stringField(row, {"update_frequency"})},
-                             {"coverUrl", normalizedCover(cover)}});
+                             {"coverUrl", normalizedCover(stringField(row, {"imgurl"}))}});
                      }
-                     callback(entries, {});
+                     callback(entries, entries.isEmpty() ? QStringLiteral("排行榜响应缺少列表")
+                                                        : QString{});
                  });
 }
 void KuGouApi::rankTracks(const QString &rankId, SearchCallback callback, int page)
@@ -622,7 +684,7 @@ void KuGouApi::rankTracks(const QString &rankId, SearchCallback callback, int pa
                      const auto songlist = data.value(QStringLiteral("songlist"));
                      const auto rows = songlist.toArray();
                      const auto tracks = songlist.isArray()
-                                             ? parseTracks(rows, TrackFormat::Ocean)
+                                             ? parseTracks(songlist.toArray(), TrackShape::Rank)
                                              : QList<Track>{};
                      bool totalOk = false;
                      const auto total = stringField(data, {"total"}).toLongLong(&totalOk);
@@ -667,15 +729,15 @@ void KuGouApi::popularPlaylists(std::function<void(QVariantList, QString)> callb
                                            .toObject().value(QStringLiteral("special_list"));
                      if (!rows.isArray())
                      {
-                         callback({}, QStringLiteral("热门歌单响应缺少 data.special_list"));
+                         callback({}, QStringLiteral("热门歌单响应缺少列表"));
                          return;
                      }
                      QVariantList entries;
                      for (const auto &value : rows.toArray())
-                         if (const auto entry = playlistEntry(value.toObject()); !entry.isEmpty())
+                         if (const auto entry = playlistEntry(value.toObject(), false); !entry.isEmpty())
                              entries.append(entry);
                      callback(entries, entries.size() != rows.toArray().size()
-                                           ? QStringLiteral("热门歌单条目缺少 ID 或标题") : QString{});
+                                           ? QStringLiteral("热门歌单缺少有效 ID 或标题") : QString{});
                  });
 }
 void KuGouApi::comments(const QString &kind, const QString &id,
@@ -709,19 +771,18 @@ void KuGouApi::comments(const QString &kind, const QString &id,
                                   QStringLiteral("评论响应不是 JSON 对象"));
                          return;
                      }
-                     bool found = false;
-                     const auto rows = commentRows(response.json.object(), &found);
-                     if (!found)
+                     const auto rows = response.json.object().value(QStringLiteral("list"));
+                     if (!rows.isArray())
                      {
                          callback({}, QStringLiteral("SchemaMismatch"),
                                   QStringLiteral("评论响应缺少列表"));
                          return;
                      }
                      QVariantList result;
-                     for (const auto &value : rows)
+                     for (const auto &value : rows.toArray())
                          if (const auto item = commentEntry(value.toObject()); !item.isEmpty())
                              result.append(item);
-                     if (!rows.isEmpty() && result.isEmpty())
+                     if (result.size() != rows.toArray().size())
                      {
                          callback({}, QStringLiteral("SchemaMismatch"),
                                   QStringLiteral("评论响应缺少内容字段"));
@@ -856,8 +917,7 @@ void KuGouApi::lyrics(const QString &hash, std::function<void(QString, QString)>
                 return;
             }
             const QJsonObject root = response.json.object();
-            const QJsonArray candidates = root.value(QStringLiteral("data"))
-                                              .toObject().value(QStringLiteral("candidates")).toArray();
+            const QJsonArray candidates = root.value(QStringLiteral("candidates")).toArray();
             if (candidates.isEmpty())
             {
                 callback({}, QStringLiteral("暂无歌词"));
@@ -885,9 +945,7 @@ void KuGouApi::lyrics(const QString &hash, std::function<void(QString, QString)>
                         callback({}, error.message);
                         return;
                     }
-                    const QJsonObject lyricRoot = lyricResponse.json.object();
-                    const QJsonObject data = lyricRoot.value(QStringLiteral("data")).toObject();
-                    const QString text = stringField(data, {"decodeContent"});
+                    const QString text = stringField(lyricResponse.json.object(), {"decodeContent"});
                     callback(text, text.isEmpty() ? QStringLiteral("歌词内容响应缺少 content")
                                                   : QString{});
                 });
@@ -917,43 +975,39 @@ void KuGouApi::userPlaylists(std::function<void(QList<Playlist>, QString, QStrin
                 return;
             }
             const QJsonObject root = response.json.object();
-            const QJsonValue data = root.value(QStringLiteral("data"));
-            if (!data.toObject().value(QStringLiteral("info")).isArray())
+            const QJsonValue rows = root.value(QStringLiteral("data")).toObject()
+                                        .value(QStringLiteral("info"));
+            if (!rows.isArray())
             {
                 callback({}, QStringLiteral("SchemaMismatch"),
                          QStringLiteral("账号响应缺少歌单列表"));
                 return;
             }
-            const QJsonArray rows = data.toObject().value(QStringLiteral("info")).toArray();
             QList<Playlist> result;
-            for (const QJsonValue &value : rows)
+            for (const QJsonValue &value : rows.toArray())
             {
                 const QJsonObject row = value.toObject();
                 const QString globalId = stringField(row, {"global_collection_id"});
                 const QString listId = stringField(row, {"listid"});
-                const QString title = stringField(row, {"specialname"});
+                const QString title = stringField(row, {"name"});
                 if ((!globalId.isEmpty() || !listId.isEmpty()) && !title.isEmpty())
                 {
                     Playlist playlist;
                     playlist.globalCollectionId = globalId;
                     playlist.listId = listId;
                     playlist.title = title;
-                    playlist.cover = normalizedCover(stringField(row, {"img"}));
+                    playlist.cover = normalizedCover(stringField(row, {"pic"}));
                     playlist.description = stringField(row, {"intro"});
-                    playlist.creatorUserId =
-                        stringField(row, {"list_create_userid"});
-                    playlist.creatorListId =
-                        stringField(row, {"list_create_listid"});
-                    playlist.trackCount =
-                        stringField(row, {"song_count"}).toInt();
-                    playlist.totalVersion =
-                        stringField(row, {"total_ver"}).toLongLong();
-                    playlist.type = stringField(row, {"type"}).toInt();
-                    playlist.sort = stringField(row, {"sort"}).toInt();
+                    playlist.creatorUserId = stringField(row, {"list_create_userid"});
+                    playlist.creatorListId = stringField(row, {"list_create_listid"});
+                    playlist.trackCount = row.value(QStringLiteral("count")).toInt();
+                    playlist.totalVersion = row.value(QStringLiteral("list_ver")).toInteger();
+                    playlist.type = row.value(QStringLiteral("type")).toInt();
+                    playlist.sort = row.value(QStringLiteral("sort")).toInt();
                     result.push_back(std::move(playlist));
                 }
             }
-            if (result.size() != rows.size())
+            if (result.size() != rows.toArray().size())
             {
                 callback({}, QStringLiteral("SchemaMismatch"),
                          QStringLiteral("歌单响应缺少必要 ID 或标题"));
@@ -964,7 +1018,7 @@ void KuGouApi::userPlaylists(std::function<void(QList<Playlist>, QString, QStrin
 }
 
 void KuGouApi::playlistTracks(const QString &globalCollectionId, const QString &listId,
-                              SearchCallback callback, int page)
+                              TrackPageCallback callback, int page)
 {
     const bool userCloudPlaylist = !listId.isEmpty();
     QUrlQuery query;
@@ -972,30 +1026,36 @@ void KuGouApi::playlistTracks(const QString &globalCollectionId, const QString &
                        userCloudPlaylist ? listId : globalCollectionId);
     query.addQueryItem(QStringLiteral("page"), QString::number(page));
     query.addQueryItem(QStringLiteral("pagesize"), QStringLiteral("30"));
-    auto handleResponse = [callback = std::move(callback), userCloudPlaylist](ApiClient::Response response) mutable
+    auto handleResponse = [userCloudPlaylist, page, callback = std::move(callback)](ApiClient::Response response) mutable
     {
         if (const auto error = endpointError(response); !error.code.isEmpty())
         {
-            callback({}, error.code, error.message);
+            callback({}, error.code, error.message, false);
             return;
         }
         const QJsonObject root = response.json.object();
         const QJsonObject data = root.value(QStringLiteral("data")).toObject();
-        const QJsonValue rows = data.value(userCloudPlaylist ? QStringLiteral("items")
-                                                            : QStringLiteral("songs"));
-        if (!rows.isArray())
+        const auto rows = data.value(userCloudPlaylist ? QStringLiteral("info")
+                                                      : QStringLiteral("songs"));
+        const auto total = data.value(QStringLiteral("count")).toInteger(-1);
+        if (total < 0 || (!rows.isArray() && !(userCloudPlaylist && rows.isNull() && total == 0)))
         {
-            callback({}, QStringLiteral("SchemaMismatch"), QStringLiteral("歌单响应缺少歌曲列表"));
+            callback({}, QStringLiteral("SchemaMismatch"), QStringLiteral("歌单响应缺少歌曲列表"), false);
             return;
         }
-        auto tracks = parseTracks(rows.toArray(), TrackFormat::Ocean);
-        if (tracks.size() != rows.toArray().size())
+        const auto tracks = parseTracks(rows.toArray(), TrackShape::Playlist);
+        int shielded = 0;
+        for (const auto &value : rows.toArray())
+            if (const auto row = value.toObject(); row.contains(QStringLiteral("shield")) &&
+                !row.contains(QStringLiteral("hash")))
+                ++shielded;
+        if (tracks.size() + shielded != rows.toArray().size())
         {
             callback({}, QStringLiteral("SchemaMismatch"),
-                     QStringLiteral("歌单歌曲缺少必要 ID 或标题"));
+                     QStringLiteral("歌单歌曲缺少必要 ID 或标题"), false);
             return;
         }
-        callback(std::move(tracks), {}, {});
+        callback(std::move(tracks), {}, {}, page * 30 < total);
     };
     if (userCloudPlaylist)
         m_client.postJson(QStringLiteral("/playlist/track/all/new"), query,
@@ -1023,16 +1083,13 @@ void KuGouApi::playlistDetail(const QString &globalCollectionId,
                          callback({}, error.message);
                          return;
                      }
-                     const QJsonObject root = response.json.object();
-                     const auto rows = root.value(QStringLiteral("data"))
-                                           .toObject().value(QStringLiteral("info"));
-                     if (!rows.isArray() || rows.toArray().size() != 1)
+                     const auto rows = response.json.object().value(QStringLiteral("data"));
+                     if (!rows.isArray() || rows.toArray().isEmpty())
                      {
-                         callback({}, QStringLiteral("歌单详情响应缺少 data.info"));
+                         callback({}, QStringLiteral("歌单详情响应缺少列表"));
                          return;
                      }
-                     const QJsonObject row = rows.toArray().first().toObject();
-                     auto detail = playlistEntry(row);
+                     auto detail = playlistEntry(rows.toArray().first().toObject(), true);
                      if (detail.isEmpty())
                      {
                          callback({}, QStringLiteral("歌单详情响应缺少有效 ID 或标题"));
@@ -1131,7 +1188,7 @@ void KuGouApi::albumTracks(const QString &albumId, SearchCallback callback, int 
                          QStringLiteral("专辑响应缺少歌曲列表"));
                 return;
             }
-            auto tracks = parseTracks(songs.toArray(), TrackFormat::Ocean);
+            auto tracks = parseTracks(songs.toArray(), TrackShape::Album);
             if (tracks.size() != songs.toArray().size())
             {
                 callback({}, QStringLiteral("SchemaMismatch"),

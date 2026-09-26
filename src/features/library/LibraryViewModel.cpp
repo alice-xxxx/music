@@ -92,7 +92,7 @@ void LibraryViewModel::requestTracks(int page)
     m_api->playlistTracks(
         m_selected.value("globalCollectionId").toString(), m_selected.value("listId").toString(),
         [this, guard = QPointer<LibraryViewModel>(this), generation,
-         page](QList<Track> rows, QString code, QString message)
+         page](QList<Track> rows, QString code, QString message, bool hasMore)
         {
             if (!guard || generation != m_generation)
                 return;
@@ -106,7 +106,7 @@ void LibraryViewModel::requestTracks(int page)
             if (page == 1)
                 m_tracks.clear();
             m_trackPage = page;
-            m_moreTracks = rows.size() == 30;
+            m_moreTracks = hasMore;
             for (const auto &track : rows)
                 m_tracks.append(m_catalog->remember(track).toMap());
             emit changed();
@@ -373,7 +373,7 @@ void LibraryViewModel::confirmPage(int page)
     {
         m_api->playlistTracks(
             {}, m_actionTarget,
-            [this, guard, generation, page](QList<Track> rows, QString code, QString)
+            [this, guard, generation, page](QList<Track> rows, QString code, QString, bool hasMore)
             {
                 if (!guard || generation != m_actionGeneration)
                     return;
@@ -391,17 +391,17 @@ void LibraryViewModel::confirmPage(int page)
                         completeAction(m_actionKind != QStringLiteral("remove"));
                         return;
                     }
-                if (rows.size() == 30 && page < 500)
+                if (hasMore && page < 500)
                 {
                     confirmPage(page + 1);
                     return;
                 }
-                if (rows.size() < 30 && m_actionKind == QStringLiteral("prepareAdd"))
+                if (!hasMore && m_actionKind == QStringLiteral("prepareAdd"))
                 {
                     writeAddedTrack();
                     return;
                 }
-                completeAction(rows.size() < 30 && m_actionKind == QStringLiteral("remove"));
+                completeAction(!hasMore && m_actionKind == QStringLiteral("remove"));
             },
             page);
         return;

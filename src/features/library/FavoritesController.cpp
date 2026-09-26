@@ -185,7 +185,7 @@ void FavoritesController::readTracks(int page, bool confirmWrite)
     m_api->playlistTracks(
         {}, m_listId,
         [this, guard = QPointer<FavoritesController>(this), generation, page,
-         confirmWrite](QList<Track> rows, QString code, QString message)
+         confirmWrite](QList<Track> rows, QString code, QString message, bool hasMore)
         {
             if (!guard || generation != m_generation)
                 return;
@@ -195,12 +195,12 @@ void FavoritesController::readTracks(int page, bool confirmWrite)
                 return;
             }
             m_readTracks.append(rows);
-            if (rows.size() == 30 && page < 500)
+            if (hasMore && page < 500)
             {
                 readTracks(page + 1, confirmWrite);
                 return;
             }
-            if (rows.size() == 30)
+            if (hasMore)
             {
                 fail(QStringLiteral("喜欢列表过大，尚未完成状态核对"));
                 return;
