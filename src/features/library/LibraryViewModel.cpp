@@ -172,16 +172,23 @@ void LibraryViewModel::invalidateSession()
 
 void LibraryViewModel::createPlaylist(const QString &name)
 {
-    if (m_actionBusy || m_actionUncertain || name.trimmed().isEmpty())
+    if (m_actionBusy || m_actionUncertain)
         return;
     ++m_actionGeneration;
-    m_actionName = name.trimmed();
-    m_actionKind = QStringLiteral("prepareCreate");
+    m_actionName = name;
+    m_actionKind = QStringLiteral("create");
     m_actionSucceeded = false;
     m_actionBusy = true;
-    m_actionMessage = QStringLiteral("正在检查歌单名称…");
+    m_actionMessage = QStringLiteral("正在创建歌单…");
     emit actionChanged();
-    confirmPage(1);
+    const auto generation = m_actionGeneration;
+    m_api->createPlaylist(
+        m_actionName,
+        [this, guard = QPointer<LibraryViewModel>(this), generation](QString code, QString message)
+        {
+            if (guard && generation == m_actionGeneration)
+                finishWrite(code, message);
+        });
 }
 void LibraryViewModel::deleteSelectedPlaylist()
 {
@@ -206,15 +213,14 @@ void LibraryViewModel::deleteSelectedPlaylist()
 }
 void LibraryViewModel::updateSelectedPlaylist(const QString &name, const QString &description)
 {
-    const QString normalizedName = name.trimmed();
-    if (m_actionBusy || m_actionUncertain || normalizedName.isEmpty() ||
+    if (m_actionBusy || m_actionUncertain ||
         m_selected.value("listId").toString().isEmpty())
         return;
     ++m_actionGeneration;
     m_actionKind = QStringLiteral("update");
     m_actionTarget = m_selected.value("listId").toString();
-    m_actionName = normalizedName;
-    m_actionDescription = description.trimmed();
+    m_actionName = name;
+    m_actionDescription = description;
     m_actionSucceeded = false;
     m_actionBusy = true;
     m_actionMessage = QStringLiteral("正在更新歌单…");
@@ -241,17 +247,16 @@ void LibraryViewModel::addTrack(int playlistIndex, const QVariantMap &data)
     ++m_actionGeneration;
     m_addedTrack = track;
     m_actionName = m_playlists.at(playlistIndex).toMap().value("title").toString();
-    m_actionKind = QStringLiteral("prepareAdd");
+    m_actionKind = QStringLiteral("add");
     m_actionSucceeded = false;
     m_actionTrackKey = track.key;
     m_actionBusy = true;
     m_actionMessage = QStringLiteral("正在加入歌单…");
     emit actionChanged();
-    confirmPage(1);
+    writeAddedTrack();
 }
 void LibraryViewModel::writeAddedTrack()
 {
-    m_actionKind = QStringLiteral("add");
     const auto generation = m_actionGeneration;
     m_api->addPlaylistTrack(
         m_actionTarget, m_addedTrack,
@@ -289,8 +294,12 @@ void LibraryViewModel::removeTrack(int trackIndex)
 }
 void LibraryViewModel::finishWrite(QString code, QString message)
 {
-    if (!code.isEmpty() && code != QStringLiteral("Timeout") &&
-        code != QStringLiteral("Unavailable"))
+    if (code.isEmpty())
+    {
+        completeAction(true);
+        return;
+    }
+    if (code != QStringLiteral("Timeout") && code != QStringLiteral("Unavailable"))
     {
         m_actionBusy = false;
         m_actionSucceeded = false;
@@ -330,6 +339,12 @@ void LibraryViewModel::completeAction(bool confirmed)
     emit actionChanged();
     if (!confirmed)
         return;
+    if (m_actionKind == QStringLiteral("create"))
+    {
+        ++m_generation;
+        requestPlaylists(1);
+        return;
+    }
     if (m_actionKind == QStringLiteral("update"))
     {
         m_title = m_actionName;
@@ -368,8 +383,7 @@ void LibraryViewModel::confirmPage(int page)
 {
     const auto generation = m_actionGeneration;
     const auto guard = QPointer<LibraryViewModel>(this);
-    if (m_actionKind == QStringLiteral("add") || m_actionKind == QStringLiteral("prepareAdd") ||
-        m_actionKind == QStringLiteral("remove"))
+    if (m_actionKind == QStringLiteral("add") || m_actionKind == QStringLiteral("remove"))
     {
         m_api->playlistTracks(
             {}, m_actionTarget,
@@ -386,19 +400,12 @@ void LibraryViewModel::confirmPage(int page)
                     if (m_actionKind == QStringLiteral("remove") ? track.fileId == m_actionFileId
                                                                  : track.key == m_actionTrackKey)
                     {
-                        if (m_actionKind == QStringLiteral("prepareAdd"))
-                            m_actionKind = QStringLiteral("add");
                         completeAction(m_actionKind != QStringLiteral("remove"));
                         return;
                     }
                 if (hasMore && page < 500)
                 {
                     confirmPage(page + 1);
-                    return;
-                }
-                if (!hasMore && m_actionKind == QStringLiteral("prepareAdd"))
-                {
-                    writeAddedTrack();
                     return;
                 }
                 completeAction(!hasMore && m_actionKind == QStringLiteral("remove"));
@@ -429,18 +436,9 @@ void LibraryViewModel::confirmPage(int page)
                     completeAction(true);
                     return;
                 }
-                if (m_actionKind != QStringLiteral("delete") &&
-                    m_actionKind != QStringLiteral("update") && playlist.title == m_actionName)
+                if (m_actionKind == QStringLiteral("create") && playlist.title == m_actionName)
                 {
-                    if (m_actionKind == QStringLiteral("prepareCreate"))
-                    {
-                        m_actionBusy = false;
-                        m_actionUncertain = false;
-                        m_actionMessage = QStringLiteral("已有同名歌单，请使用其他名称");
-                        emit actionChanged();
-                    }
-                    else
-                        completeAction(true);
+                    completeAction(true);
                     return;
                 }
             }
@@ -454,18 +452,7 @@ void LibraryViewModel::confirmPage(int page)
                 completeAction(false);
                 return;
             }
-            if (m_actionKind == QStringLiteral("prepareCreate"))
-            {
-                m_actionKind = QStringLiteral("create");
-                m_api->createPlaylist(m_actionName,
-                                      [this, guard, generation](QString code, QString message)
-                                      {
-                                          if (guard && generation == m_actionGeneration)
-                                              finishWrite(code, message);
-                                      });
-            }
-            else
-                completeAction(m_actionKind == QStringLiteral("delete"));
+            completeAction(m_actionKind == QStringLiteral("delete"));
         },
         page);
 }

@@ -229,6 +229,8 @@ class PlaybackController final : public QObject
     QUrl m_prefetchedMedia;
     bool m_prefetchedStartsShuffleRound = false;
     QTimer m_prefetchExpiry;
+    QTimer m_prefetchRetryTimer;
+    int m_prefetchFailures = 0;
     QList<QueueItem> m_history;
     QString m_lyrics;
     LyricsModel m_lyricLines;

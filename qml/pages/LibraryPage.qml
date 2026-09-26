@@ -408,14 +408,8 @@ Page {
             TextField {
                 id: playlistName
                 placeholderText: "输入歌单名称"
-                maximumLength: 100
                 Layout.fillWidth: true
                 onAccepted: if (createButton.enabled) createButton.clicked()
-            }
-            Label {
-                text: playlistName.text.length + " / 100"
-                color: Theme.textSecondary
-                Layout.alignment: Qt.AlignRight
             }
             Label {
                 text: root.libraryViewModel.actionMessage
@@ -428,8 +422,7 @@ Page {
                 id: createButton
                 text: root.libraryViewModel.actionBusy ? "正在创建…" : "创建"
                 highlighted: true
-                enabled: playlistName.text.trim().length > 0 &&
-                         !root.libraryViewModel.actionBusy &&
+                enabled: !root.libraryViewModel.actionBusy &&
                          !root.libraryViewModel.actionUncertain
                 onClicked: root.libraryViewModel.createPlaylist(playlistName.text)
             }
@@ -452,7 +445,6 @@ Page {
             Label { text: "歌单名称" }
             TextField {
                 id: editPlaylistName
-                maximumLength: 100
                 Layout.fillWidth: true
             }
             Label { text: "简介" }
@@ -461,7 +453,6 @@ Page {
                 Layout.preferredHeight: 120
                 TextArea {
                     id: editPlaylistDescription
-                    onTextChanged: if (text.length > 500) text = text.slice(0, 500)
                     wrapMode: TextEdit.Wrap
                     placeholderText: "填写歌单简介（可选）"
                 }
@@ -476,8 +467,7 @@ Page {
             Button {
                 text: root.libraryViewModel.actionBusy ? "正在保存…" : "保存"
                 highlighted: true
-                enabled: editPlaylistName.text.trim().length > 0 &&
-                         !root.libraryViewModel.actionBusy &&
+                enabled: !root.libraryViewModel.actionBusy &&
                          !root.libraryViewModel.actionUncertain
                 onClicked: root.libraryViewModel.updateSelectedPlaylist(
                                editPlaylistName.text, editPlaylistDescription.text)

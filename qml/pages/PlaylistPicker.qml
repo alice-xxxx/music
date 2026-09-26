@@ -169,20 +169,14 @@ Dialog {
             TextField {
                 id: playlistName
                 Layout.fillWidth: true
-                maximumLength: 100
                 placeholderText: "输入歌单名称"
                 onAccepted: if (createButton.enabled) createButton.clicked()
-            }
-            Label {
-                text: playlistName.text.length + " / 100"
-                color: Theme.textSecondary
-                Layout.alignment: Qt.AlignRight
             }
             Button {
                 id: createButton
                 text: root.library.actionBusy ? "正在创建…" : "创建"
                 highlighted: true
-                enabled: playlistName.text.trim().length > 0 && !root.library.actionBusy &&
+                enabled: !root.library.actionBusy &&
                          !root.library.actionUncertain
                 onClicked: root.library.createPlaylist(playlistName.text)
             }

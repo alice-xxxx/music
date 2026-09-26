@@ -30,6 +30,9 @@ PlaybackController::PlaybackController(KuGouApi *api, CatalogService *catalog, L
     m_prefetchExpiry.setSingleShot(true);
     connect(&m_prefetchExpiry, &QTimer::timeout, this,
             &PlaybackController::invalidatePrefetch);
+    m_prefetchRetryTimer.setSingleShot(true);
+    connect(&m_prefetchRetryTimer, &QTimer::timeout, this,
+            &PlaybackController::maybePrefetchNextMedia);
     connect(m_catalog, &CatalogService::trackUpdated, this,
             [this](const Track &track)
             {
@@ -1103,7 +1106,8 @@ int PlaybackController::nextPrefetchIndex(bool *startsNewShuffleRound) const
 
 void PlaybackController::maybePrefetchNextMedia()
 {
-    if (m_prefetchedQueueItemId != 0 || !m_desiredPlaying || m_resolving || m_recovering ||
+    if (m_prefetchedQueueItemId != 0 || m_prefetchRetryTimer.isActive() ||
+        m_prefetchFailures >= 2 || !m_desiredPlaying || m_resolving || m_recovering ||
         m_player.playbackState() != QMediaPlayer::PlayingState || duration() <= 0 ||
         duration() - position() > 45000)
         return;
@@ -1127,7 +1131,17 @@ void PlaybackController::maybePrefetchNextMedia()
             if (error.isEmpty() && !url.isEmpty())
             {
                 m_prefetchedMedia = url;
+                m_prefetchFailures = 0;
                 m_prefetchExpiry.start(90000);
+            }
+            else
+            {
+                m_prefetchedQueueItemId = 0;
+                m_prefetchedQuality.clear();
+                m_prefetchedStartsShuffleRound = false;
+                ++m_prefetchFailures;
+                if (m_prefetchFailures < 2)
+                    m_prefetchRetryTimer.start(1500);
             }
         },
         m_requestedQuality);
@@ -1137,6 +1151,8 @@ void PlaybackController::invalidatePrefetch()
 {
     ++m_prefetchGeneration;
     m_prefetchExpiry.stop();
+    m_prefetchRetryTimer.stop();
+    m_prefetchFailures = 0;
     m_prefetchedQueueItemId = 0;
     m_prefetchedQuality.clear();
     m_prefetchedMedia = QUrl{};

@@ -84,12 +84,6 @@ void CommentsViewModel::send(const QString &content)
         emit loginRequired();
         return;
     }
-    if (content.trimmed().isEmpty() || content.trimmed().size() > 500)
-    {
-        m_sendMessage = QStringLiteral("评论应为 1—500 字");
-        emit changed();
-        return;
-    }
     m_sending = true;
     m_sendMessage = QStringLiteral("正在发布…");
     emit changed();

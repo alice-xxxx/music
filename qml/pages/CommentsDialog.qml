@@ -122,7 +122,6 @@ Dialog {
             placeholderText: root.sessionManager.authenticated ? "写下评论（最多 500 字）" :
                                                                    "登录后可发表评论"
             wrapMode: TextEdit.Wrap
-            onTextChanged: if (text.length > 500) text = text.slice(0, 500)
         }
         Label {
             text: root.commentsViewModel.sendMessage
@@ -142,8 +141,7 @@ Dialog {
                 text: root.sessionManager.authenticated ?
                           (root.commentsViewModel.sending ? "正在提交…" : "发表评论") : "登录后评论"
                 enabled: !root.commentsViewModel.sending &&
-                         !root.commentsViewModel.sendUncertain &&
-                         (!root.sessionManager.authenticated || commentInput.text.trim().length > 0)
+                         !root.commentsViewModel.sendUncertain
                 highlighted: true
                 onClicked: root.sessionManager.authenticated ? confirmSend.open() :
                                                                  root.loginRequested()

@@ -5,6 +5,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
+#include <QTimer>
 #include <QUrlQuery>
 
 namespace
@@ -32,6 +34,12 @@ EndpointError endpointError(const ApiClient::Response &response, bool searchEndp
                 message};
     }
     return {response.errorCode, response.errorMessage};
+}
+bool transientPlaybackError(const ApiClient::Response &response)
+{
+    return response.errorCode == QStringLiteral("Timeout") ||
+           (response.errorCode == QStringLiteral("Unavailable") &&
+            (response.httpStatus == 0 || response.httpStatus >= 500));
 }
 QString stringField(const QJsonObject &o, std::initializer_list<const char *> names)
 {
@@ -233,6 +241,8 @@ void KuGouApi::setServiceBase(QUrl serviceBase)
                               : RegistrationState::Unregistered;
     m_authenticated = m_client.cookieJar()->hasLoginSession();
     m_userAuthAttempted = false;
+    m_authPlaybackRetryAfter = 0;
+    ++m_resolveSessionGeneration;
     m_pendingResolves.clear();
     emit sessionInvalidated();
 }
@@ -342,19 +352,9 @@ void KuGouApi::trackMetadata(Track track, std::function<void(Track, QString)> ca
 void KuGouApi::resolveSong(const QString &hash, const QString &albumAudioId,
                            std::function<void(QUrl, QString)> callback, const QString &quality)
 {
-    static const QStringList supportedQualities{
-        QStringLiteral("128"),         QStringLiteral("320"),
-        QStringLiteral("flac"),        QStringLiteral("high"),
-        QStringLiteral("piano"),       QStringLiteral("acappella"),
-        QStringLiteral("subwoofer"),   QStringLiteral("ancient"),
-        QStringLiteral("surnay"),      QStringLiteral("dj"),
-        QStringLiteral("viper_atmos"), QStringLiteral("viper_clear"),
-        QStringLiteral("viper_tape"),  QStringLiteral("super")};
-    const auto requestedQuality = supportedQualities.contains(quality) ? quality
-                                                                        : QStringLiteral("128");
     if (m_registrationState != RegistrationState::Registered)
     {
-        m_pendingResolves.push_back({hash, albumAudioId, std::move(callback), requestedQuality});
+        m_pendingResolves.push_back({hash, albumAudioId, std::move(callback), quality});
         if (m_registrationState == RegistrationState::Registering)
             return;
         m_registrationState = RegistrationState::Registering;
@@ -382,7 +382,7 @@ void KuGouApi::resolveSong(const QString &hash, const QString &albumAudioId,
             });
         return;
     }
-    resolveSongAfterRegistration(hash, albumAudioId, std::move(callback), requestedQuality);
+    resolveSongAfterRegistration(hash, albumAudioId, std::move(callback), quality);
 }
 
 void KuGouApi::resolveSongAfterRegistration(const QString &hash, const QString &albumAudioId,
@@ -397,35 +397,28 @@ void KuGouApi::resolveSongAfterRegistration(const QString &hash, const QString &
 
     auto completion = std::make_shared<std::function<void(QUrl, QString)>>(std::move(callback));
     auto requestPublicUrl = [this, query, completion]()
-    {
-        m_client.get(QStringLiteral("/song/url"), query,
-                     [completion](ApiClient::Response response)
-                     {
-                         if (const auto error = endpointError(response); !error.code.isEmpty())
-                         {
-                             (*completion)({}, error.message);
-                             return;
-                         }
-                         const QUrl url = mediaUrl(response);
-                         (*completion)(url, url.isEmpty()
-                                                ? QStringLiteral("服务未返回可播放的音频地址")
-                                                : QString{});
-                     });
-    };
+    { requestPublicSongUrl(query, completion); };
     auto requestAuthenticatedUrl = [this, query, completion, requestPublicUrl]()
     {
         m_client.get(QStringLiteral("/song/url/auth/merge"), query,
-                     [completion, requestPublicUrl](ApiClient::Response response)
+                     [this, completion, requestPublicUrl](ApiClient::Response response)
                      {
                          const auto error = endpointError(response);
                          const QUrl url = error.code.isEmpty() ? mediaUrl(response) : QUrl{};
                          if (!url.isEmpty())
+                         {
+                             m_authPlaybackRetryAfter = 0;
                              (*completion)(url, {});
+                         }
                          else
+                         {
+                             if (transientPlaybackError(response))
+                                 m_authPlaybackRetryAfter = QDateTime::currentMSecsSinceEpoch() + 60000;
                              requestPublicUrl();
+                         }
                      });
     };
-    if (!authenticated())
+    if (!authenticated() || QDateTime::currentMSecsSinceEpoch() < m_authPlaybackRetryAfter)
     {
         requestPublicUrl();
         return;
@@ -440,11 +433,47 @@ void KuGouApi::resolveSongAfterRegistration(const QString &hash, const QString &
                  {
                      if (const auto error = endpointError(response); !error.code.isEmpty())
                      {
+                         if (transientPlaybackError(response))
+                             m_authPlaybackRetryAfter = QDateTime::currentMSecsSinceEpoch() + 60000;
                          requestPublicUrl();
                          return;
                      }
                      m_userAuthAttempted = true;
                      requestAuthenticatedUrl();
+                 });
+}
+
+void KuGouApi::requestPublicSongUrl(
+    const QUrlQuery &query,
+    std::shared_ptr<std::function<void(QUrl, QString)>> completion, int retriesLeft)
+{
+    m_client.get(QStringLiteral("/song/url"), query,
+                 [this, guard = QPointer<KuGouApi>(this), query, completion,
+                  retriesLeft](ApiClient::Response response)
+                 {
+                     if (!guard)
+                         return;
+                     if (const auto error = endpointError(response); !error.code.isEmpty())
+                     {
+                         if (transientPlaybackError(response) && retriesLeft > 0)
+                         {
+                             const auto generation = m_resolveSessionGeneration;
+                             QTimer::singleShot(350, this,
+                                                [this, query, completion, retriesLeft, generation]
+                                                {
+                                                    if (generation == m_resolveSessionGeneration)
+                                                        requestPublicSongUrl(query, completion,
+                                                                             retriesLeft - 1);
+                                                });
+                             return;
+                         }
+                         (*completion)({}, error.message);
+                         return;
+                     }
+                     const QUrl url = mediaUrl(response);
+                     (*completion)(url, url.isEmpty()
+                                            ? QStringLiteral("服务未返回可播放的音频地址")
+                                            : QString{});
                  });
 }
 
@@ -747,7 +776,7 @@ void KuGouApi::comments(const QString &kind, const QString &id,
                          : kind == QStringLiteral("album") ? QStringLiteral("/comment/album")
                          : kind == QStringLiteral("playlist") ? QStringLiteral("/comment/playlist")
                                                                : QString{};
-    if (path.isEmpty() || id.trimmed().isEmpty() || page < 1)
+    if (path.isEmpty())
     {
         callback({}, QStringLiteral("InvalidArgument"), QStringLiteral("评论目标无效"));
         return;
@@ -798,20 +827,14 @@ void KuGouApi::sendComment(const QString &kind, const QString &id, const QString
                          : kind == QStringLiteral("album") ? QStringLiteral("/comment/album/send")
                          : kind == QStringLiteral("playlist") ? QStringLiteral("/comment/playlist/send")
                                                                : QString{};
-    const QString message = content.trimmed();
-    if (path.isEmpty() || id.trimmed().isEmpty() || message.isEmpty() || message.size() > 500)
+    if (path.isEmpty())
     {
-        callback(QStringLiteral("InvalidArgument"), QStringLiteral("评论目标或内容无效（最多 500 字）"));
-        return;
-    }
-    if (!authenticated())
-    {
-        callback(QStringLiteral("AuthRequired"), QStringLiteral("登录后才能发表评论"));
+        callback(QStringLiteral("InvalidArgument"), QStringLiteral("评论类型无效"));
         return;
     }
     QJsonObject body{{kind == QStringLiteral("song") ? QStringLiteral("mixsongid")
                                                      : QStringLiteral("id"), id},
-                     {"content", message}};
+                     {"content", content}};
     if (!name.trimmed().isEmpty())
         body.insert(QStringLiteral("name"), name.trimmed());
     m_client.postJson(path, {}, QJsonDocument(body),
@@ -956,11 +979,6 @@ void KuGouApi::userPlaylists(std::function<void(QList<Playlist>, QString, QStrin
                              int page)
 {
     const QString userId = m_client.cookieJar()->userId();
-    if (userId.isEmpty())
-    {
-        callback({}, QStringLiteral("AuthRequired"), QStringLiteral("登录后可查看歌单"));
-        return;
-    }
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("userid"), userId);
     query.addQueryItem(QStringLiteral("page"), QString::number(page));
@@ -1067,11 +1085,6 @@ void KuGouApi::playlistTracks(const QString &globalCollectionId, const QString &
 void KuGouApi::playlistDetail(const QString &globalCollectionId,
                               std::function<void(QVariantMap, QString)> callback)
 {
-    if (globalCollectionId.isEmpty())
-    {
-        callback({}, QStringLiteral("歌单缺少 global_collection_id"));
-        return;
-    }
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("ids"), globalCollectionId);
     m_client.get(QStringLiteral("/playlist/detail"), query,
@@ -1211,22 +1224,11 @@ void KuGouApi::createPlaylist(const QString &name, WriteCallback callback)
 }
 void KuGouApi::favoritePlaylist(const QVariantMap &playlist, WriteCallback callback)
 {
-    if (!authenticated())
-    {
-        callback(QStringLiteral("AuthRequired"), QStringLiteral("登录后才能收藏歌单"));
-        return;
-    }
-    const QString name = playlist.value(QStringLiteral("title")).toString().trimmed();
+    const QString name = playlist.value(QStringLiteral("title")).toString();
     const QString creatorUserId =
         playlist.value(QStringLiteral("creatorUserId")).toString();
     const QString creatorListId =
         playlist.value(QStringLiteral("creatorListId")).toString();
-    if (name.isEmpty() || creatorUserId.isEmpty() || creatorListId.isEmpty())
-    {
-        callback(QStringLiteral("SchemaMismatch"),
-                 QStringLiteral("歌单详情缺少收藏所需的创建者信息"));
-        return;
-    }
     const QJsonObject body{{"name", name},
                            {"type", 1},
                            {"source", 1},
@@ -1255,16 +1257,11 @@ void KuGouApi::updatePlaylist(const QString &listId, qint64 totalVersion, int ty
                               const QString &name, const QString &description,
                               WriteCallback callback)
 {
-    if (listId.isEmpty() || name.trimmed().isEmpty())
-    {
-        callback(QStringLiteral("InvalidArgument"), QStringLiteral("歌单名称不能为空"));
-        return;
-    }
     const QJsonObject body{{"listid", listId},
                            {"total_ver", totalVersion},
                            {"type", type},
-                           {"name", name.trimmed()},
-                           {"intro", description.trimmed()}};
+                           {"name", name},
+                           {"intro", description}};
     m_client.postJson(QStringLiteral("/playlist/update"), {}, QJsonDocument(body),
                       [callback = std::move(callback)](ApiClient::Response response)
                       {
@@ -1296,12 +1293,6 @@ void KuGouApi::addPlaylistTrack(const QString &listId, const Track &track, Write
 void KuGouApi::removePlaylistTrack(const QString &listId, const QString &fileId,
                                    WriteCallback callback)
 {
-    if (fileId.isEmpty())
-    {
-        callback(QStringLiteral("SchemaMismatch"),
-                 QStringLiteral("歌曲缺少移除标识，请先刷新歌单"));
-        return;
-    }
     m_client.postJson(QStringLiteral("/playlist/tracks/del"), {},
                       QJsonDocument(QJsonObject{{"listid", listId}, {"fileids", fileId}}),
                       [callback = std::move(callback)](ApiClient::Response response)
@@ -1371,6 +1362,8 @@ bool KuGouApi::beginAuthenticatedSession()
     m_registrationState = RegistrationState::Unregistered;
     m_authenticated = m_client.cookieJar()->hasLoginSession();
     m_userAuthAttempted = false;
+    m_authPlaybackRetryAfter = 0;
+    ++m_resolveSessionGeneration;
     m_client.invalidateSession();
     m_pendingResolves.clear();
     emit sessionInvalidated();
@@ -1398,7 +1391,10 @@ bool KuGouApi::restoreAuthenticatedSession()
     const auto *jar = m_client.cookieJar();
     m_authenticated = jar && jar->hasLoginSession();
     if (!m_authenticated)
+    {
         m_userAuthAttempted = false;
+        m_authPlaybackRetryAfter = 0;
+    }
     return m_authenticated;
 }
 
@@ -1410,6 +1406,8 @@ void KuGouApi::logout()
         jar->clearStoredCookies();
     m_authenticated = false;
     m_userAuthAttempted = false;
+    m_authPlaybackRetryAfter = 0;
+    ++m_resolveSessionGeneration;
     m_registrationState = RegistrationState::Unregistered;
     m_pendingResolves.clear();
     emit sessionInvalidated();

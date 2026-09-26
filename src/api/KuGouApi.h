@@ -100,6 +100,9 @@ class KuGouApi final : public QObject
     void resolveSongAfterRegistration(const QString &hash, const QString &albumAudioId,
                                       std::function<void(QUrl, QString)> callback,
                                       const QString &quality);
+    void requestPublicSongUrl(const QUrlQuery &query,
+                              std::shared_ptr<std::function<void(QUrl, QString)>> completion,
+                              int retriesLeft = 1);
     ApiClient m_client;
     QUrl m_serviceBase;
     RegistrationState m_registrationState = RegistrationState::Unregistered;
@@ -113,5 +116,7 @@ class KuGouApi final : public QObject
     QList<PendingResolve> m_pendingResolves;
     bool m_authenticated = false;
     bool m_userAuthAttempted = false;
+    qint64 m_authPlaybackRetryAfter = 0;
+    quint64 m_resolveSessionGeneration = 0;
     std::unique_ptr<ApiClient> m_loginClient;
 };
